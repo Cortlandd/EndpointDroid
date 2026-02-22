@@ -343,39 +343,51 @@ internal object EndpointDocDetailsResolver {
     private fun collectUsageLocations(project: Project, method: PsiMethod): UsageCollection {
         val locations = linkedMapOf<String, EndpointDocDetails.UsageLocation>()
         var truncated = false
+        val candidateMethods = linkedSetOf<PsiMethod>()
+        candidateMethods += method
+        // OkHttp wrappers frequently expose endpoint behavior through overrides.
+        // Searching super signatures catches call-sites typed to base abstractions.
+        method.findSuperMethods().forEach { candidateMethods += it }
+        method.findDeepestSuperMethods().forEach { candidateMethods += it }
 
-        MethodReferencesSearch.search(method, GlobalSearchScope.projectScope(project), true)
-            .forEach(Processor { reference ->
-                val element = reference.element ?: return@Processor true
-                val virtualFile = element.containingFile?.virtualFile ?: return@Processor true
-                if (isImportReference(element)) return@Processor true
+        val scope = GlobalSearchScope.projectScope(project)
+        usageLoop@ for (candidate in candidateMethods) {
+            val complete = MethodReferencesSearch.search(candidate, scope, false)
+                .forEach(Processor { reference ->
+                    val element = reference.element ?: return@Processor true
+                    val virtualFile = element.containingFile?.virtualFile ?: return@Processor true
+                    if (isImportReference(element)) return@Processor true
 
-                val offset = element.textOffset.coerceAtLeast(0)
-                val line = FileDocumentManager.getInstance()
-                    .getDocument(virtualFile)
-                    ?.getLineNumber(offset)
-                    ?.plus(1)
-                    ?: 1
-                val displayPath = toProjectRelativePath(project, virtualFile.path)
-                val containerName = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)?.name
-                val dedupeKey = "${virtualFile.path}:$line:${containerName.orEmpty()}"
-                locations.putIfAbsent(
-                    dedupeKey,
-                    EndpointDocDetails.UsageLocation(
-                        displayPath = displayPath,
-                        line = line,
-                        containerName = containerName,
-                        filePath = virtualFile.path,
-                        offset = offset
+                    val offset = element.textOffset.coerceAtLeast(0)
+                    val line = FileDocumentManager.getInstance()
+                        .getDocument(virtualFile)
+                        ?.getLineNumber(offset)
+                        ?.plus(1)
+                        ?: 1
+                    val displayPath = toProjectRelativePath(project, virtualFile.path)
+                    val containerName = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)?.name
+                    val dedupeKey = "${virtualFile.path}:$line:${containerName.orEmpty()}"
+                    locations.putIfAbsent(
+                        dedupeKey,
+                        EndpointDocDetails.UsageLocation(
+                            displayPath = displayPath,
+                            line = line,
+                            containerName = containerName,
+                            filePath = virtualFile.path,
+                            offset = offset
+                        )
                     )
-                )
 
-                if (locations.size >= MAX_USAGE_LOCATIONS) {
-                    truncated = true
-                    return@Processor false
-                }
-                true
-            })
+                    if (locations.size >= MAX_USAGE_LOCATIONS) {
+                        truncated = true
+                        return@Processor false
+                    }
+                    true
+                })
+            if (!complete || truncated) {
+                break@usageLoop
+            }
+        }
 
         return UsageCollection(
             locations = locations.values
