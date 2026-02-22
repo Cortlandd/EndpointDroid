@@ -212,7 +212,7 @@ internal object MarkdownDocRenderer {
             }
             appendLine()
             appendLine(sectionTitle("Error"))
-            appendLine("- No error response sample detected.")
+            appendLine("- None")
 
             appendLine()
             appendLine(sectionTitle("Notes"))
