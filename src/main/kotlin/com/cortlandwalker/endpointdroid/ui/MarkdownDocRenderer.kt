@@ -59,13 +59,13 @@ internal object MarkdownDocRenderer {
             }
             appendLine()
 
-            appendLine("**Types**")
+            appendLine(sectionTitle("Types"))
             appendLine("- Request: ${renderType(ep.requestType)}")
             appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
             if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("**Path Parameters**")
+                appendLine(sectionTitle("Path Parameters"))
                 pathParams.forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -73,7 +73,7 @@ internal object MarkdownDocRenderer {
 
             if (queryParams.isNotEmpty() || details.hasQueryMap) {
                 appendLine()
-                appendLine("**Query Parameters**")
+                appendLine(sectionTitle("Query Parameters"))
                 if (queryParams.isNotEmpty()) {
                     appendLine()
                     appendLine(
@@ -98,7 +98,7 @@ internal object MarkdownDocRenderer {
 
             if (headerRows.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
-                appendLine("**Header Parameters**")
+                appendLine(sectionTitle("Header Parameters"))
                 if (headerRows.isNotEmpty()) {
                     appendLine()
                     appendLine(
@@ -116,7 +116,7 @@ internal object MarkdownDocRenderer {
 
             if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
                 appendLine()
-                appendLine("**Form Fields**")
+                appendLine(sectionTitle("Form Fields"))
                 details.fieldParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -127,7 +127,7 @@ internal object MarkdownDocRenderer {
 
             if (details.partParams.isNotEmpty() || details.hasPartMap) {
                 appendLine()
-                appendLine("**Multipart Parts**")
+                appendLine(sectionTitle("Multipart Parts"))
                 details.partParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -138,13 +138,14 @@ internal object MarkdownDocRenderer {
 
             if (details.hasBody || ep.requestType != null) {
                 appendLine()
-                appendLine("**Request body**")
+                appendLine(sectionTitle("Request body"))
                 appendLine()
                 appendLine("Type: ${renderType(ep.requestType)}")
                 appendLine("Content-Type: application/json")
                 details.requestSchemaJson?.let { schema ->
                     appendLine()
                     appendLine("Schema (from model)")
+                    appendLine()
                     appendLine("```json")
                     appendLine(schema)
                     appendLine("```")
@@ -152,6 +153,7 @@ internal object MarkdownDocRenderer {
                 details.requestExampleJson?.let { example ->
                     appendLine()
                     appendLine("Example")
+                    appendLine()
                     appendLine("```json")
                     appendLine(example)
                     appendLine("```")
@@ -159,25 +161,28 @@ internal object MarkdownDocRenderer {
             }
 
             appendLine()
-            appendLine("**Response**")
+            appendLine(sectionTitle("Response"))
             appendLine()
             appendLine("Type: ${renderType(ep.responseType, fallback = "Unknown")}")
             appendLine()
-            appendLine("**Success**")
-            appendLine("- 200 OK")
+            appendLine(sectionTitle("Success"))
+            appendLine("200 OK")
+            appendLine()
             appendLine("```json")
             appendLine(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
             appendLine("```")
             appendLine()
-            appendLine("**Error**")
-            appendLine("- 400 Bad Request -> ApiError")
-            appendLine("- 401 Unauthorized -> ApiError")
+            appendLine(sectionTitle("Error"))
+            appendLine("400 Bad Request -> ApiError")
+            appendLine("401 Unauthorized -> ApiError")
+            appendLine()
             appendLine("```json")
             appendLine(DEFAULT_API_ERROR_JSON)
             appendLine("```")
 
             appendLine()
-            appendLine("**HTTP Client (.http)**")
+            appendLine(sectionTitle("HTTP Client (.http)"))
+            appendLine()
             appendLine("```http")
             appendLine("### $serviceSimpleName.${ep.functionName}")
             appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
@@ -191,7 +196,7 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("**Notes**")
+            appendLine(sectionTitle("Notes"))
             appendLine("- Authorization header is included only when required (from Retrofit annotations/headers).")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
@@ -256,6 +261,11 @@ internal object MarkdownDocRenderer {
     private fun escapeMarkdownCell(value: String): String {
         return value.replace("|", "\\|")
     }
+
+    /**
+     * Builds a bold section title that reliably starts a new markdown block.
+     */
+    private fun sectionTitle(title: String): String = "### **$title**"
 
     /**
      * Builds the compact one-line endpoint header with status badges.
