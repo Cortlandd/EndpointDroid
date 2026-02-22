@@ -210,15 +210,15 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      */
     private fun renderMarkdownDetails(markdown: String) {
         detailsVirtualFile.setContent(this, markdown, false)
-        val html = MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
 
         val previewPanel = markdownPreviewPanel
         if (previewPanel != null) {
-            previewPanel.setHtml(html, 0, detailsVirtualFile)
+            // Markdown preview panels expect markdown source and perform their own rendering pipeline.
+            previewPanel.setHtml(markdown, 0, detailsVirtualFile)
             return
         }
 
-        detailsPaneFallback.text = html
+        detailsPaneFallback.text = MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
         detailsPaneFallback.caretPosition = 0
     }
 
