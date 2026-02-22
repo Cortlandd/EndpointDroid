@@ -2,16 +2,19 @@ package com.cortlandwalker.endpointdroid.ui
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
 import com.cortlandwalker.endpointdroid.services.EndpointService
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.project.DumbService
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import java.awt.BorderLayout
+import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ListSelectionModel
@@ -33,10 +36,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         selectionMode = ListSelectionModel.SINGLE_SELECTION
         emptyText.text = INITIAL_MESSAGE
     }
-    private val detailsArea = JBTextArea().apply {
+    private val detailsPane = JEditorPane("text/html", "").apply {
         isEditable = false
-        lineWrap = false
-        wrapStyleWord = false
     }
 
     private val endpointService = EndpointService.getInstance(project)
@@ -66,7 +67,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         val split = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
             JBScrollPane(endpointList),
-            JBScrollPane(detailsArea)
+            JBScrollPane(detailsPane)
         ).apply {
             resizeWeight = 0.45
         }
@@ -74,9 +75,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
 
         // When user selects an endpoint, render docs in the right pane.
         endpointList.addListSelectionListener {
+            if (it.valueIsAdjusting) return@addListSelectionListener
             val ep = endpointList.selectedValue ?: return@addListSelectionListener
-            detailsArea.text = MarkdownDocRenderer.render(ep)
-            detailsArea.caretPosition = 0
+            renderMarkdownDetails(MarkdownDocRenderer.render(ep))
         }
 
         showDetailsMessage(INITIAL_MESSAGE)
@@ -134,11 +135,18 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     /**
+     * Renders markdown in the details pane.
+     */
+    private fun renderMarkdownDetails(markdown: String) {
+        detailsPane.text = MarkdownHtmlRenderer.toHtml(markdown)
+        detailsPane.caretPosition = 0
+    }
+
+    /**
      * Shows non-endpoint information in the details pane and resets scroll position.
      */
     private fun showDetailsMessage(message: String) {
-        detailsArea.text = message
-        detailsArea.caretPosition = 0
+        renderMarkdownDetails(message)
     }
 
     private companion object {
