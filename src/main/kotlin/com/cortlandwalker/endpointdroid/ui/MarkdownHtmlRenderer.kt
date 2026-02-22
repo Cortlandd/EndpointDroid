@@ -18,13 +18,7 @@ internal object MarkdownHtmlRenderer {
      * Converts markdown to HTML. The project/file parameters are accepted to keep call sites stable.
      */
     fun toHtml(project: Project, virtualFile: VirtualFile, markdown: String): String {
-        val renderedBody = runCatching {
-            val flavour = GFMFlavourDescriptor()
-            val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
-            HtmlGenerator(markdown, tree, flavour).generateHtml()
-        }.getOrElse {
-            "<pre>${escapeHtml(markdown)}</pre>"
-        }
+        val renderedBody = renderMarkdownBody(markdown)
 
         // project/virtualFile are intentionally unused for this lightweight renderer path.
         @Suppress("UNUSED_VARIABLE")
@@ -36,6 +30,29 @@ internal object MarkdownHtmlRenderer {
             )
         )
         return "<html><body>$swingSafeBody</body></html>"
+    }
+
+    /**
+     * Converts markdown to HTML without EndpointDroid-specific styling transforms.
+     *
+     * This is useful for testing parser-native markdown rendering behavior.
+     */
+    fun toPlainHtml(markdown: String): String {
+        val renderedBody = renderMarkdownBody(markdown)
+        return "<html><body>$renderedBody</body></html>"
+    }
+
+    /**
+     * Converts markdown source into raw HTML body using the markdown parser only.
+     */
+    private fun renderMarkdownBody(markdown: String): String {
+        return runCatching {
+            val flavour = GFMFlavourDescriptor()
+            val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
+            HtmlGenerator(markdown, tree, flavour).generateHtml()
+        }.getOrElse {
+            "<pre>${escapeHtml(markdown)}</pre>"
+        }
     }
 
     /**

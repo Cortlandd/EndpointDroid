@@ -437,7 +437,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         detailsVirtualFile.setContent(this, markdown, false)
         detailsPaneFallback.text = when (DETAILS_RENDER_MODE) {
             DetailsRenderMode.HTML_RENDERED -> MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
-            DetailsRenderMode.MARKDOWN_RAW -> markdown
+            DetailsRenderMode.MARKDOWN_RAW -> MarkdownHtmlRenderer.toPlainHtml(markdown)
         }
         detailsPaneFallback.caretPosition = 0
     }
@@ -448,7 +448,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun detailsContentType(): String {
         return when (DETAILS_RENDER_MODE) {
             DetailsRenderMode.HTML_RENDERED -> "text/html"
-            DetailsRenderMode.MARKDOWN_RAW -> "text/plain"
+            DetailsRenderMode.MARKDOWN_RAW -> "text/html"
         }
     }
 
@@ -698,9 +698,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private companion object {
         // One-line test switch:
-        // - HTML_RENDERED: current markdown->HTML renderer
-        // - MARKDOWN_RAW: plain markdown text (no HTML conversion)
-        val DETAILS_RENDER_MODE = DetailsRenderMode.HTML_RENDERED
+        // - HTML_RENDERED: markdown->HTML with EndpointDroid styling transforms
+        // - MARKDOWN_RAW: markdown->HTML parser output only (no custom styling)
+        val DETAILS_RENDER_MODE = DetailsRenderMode.MARKDOWN_RAW
         const val DEFAULT_SPLIT_WEIGHT = 0.45
         const val INDEXING_MESSAGE = "Indexing..."
         const val REFRESHING_MESSAGE = "Refreshing endpoints..."
