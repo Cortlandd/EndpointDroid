@@ -1,9 +1,15 @@
-.gradle
+.idea/
+*.iml
+
+# IntelliJ Platform Gradle Plugin caches / local IDE artifacts
+.intellijPlatform/
+
+# Heap dumps
+*.hprof
+
+# (optional) Gradle local caches
+.gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-.kotlin
 
 ### IntelliJ IDEA ###
 .idea/modules.xml

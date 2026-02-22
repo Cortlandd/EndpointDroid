@@ -17,17 +17,23 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
-        intellijIdea("2025.2.4")
+        // Target Android Studio platform (Otter 2025.2.3 => AI-252.*)
+        //androidStudio("2025.2.3")
+        local("/Applications/Android Studio.app/Contents")
+
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
-        // Add plugin dependencies for compilation here:
+        // If you use Android-specific APIs, you may need the Android plugin:
+        bundledPlugin("org.jetbrains.android")
     }
 }
 
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "252.25557"
+            // Android Studio Otter is based on 252.*
+            sinceBuild = "252"
+            untilBuild = "252.*"
         }
 
         changeNotes = """
@@ -37,10 +43,15 @@ intellijPlatform {
 }
 
 tasks {
-    // Set the JVM compatibility versions
     withType<JavaCompile> {
         sourceCompatibility = "21"
         targetCompatibility = "21"
+    }
+
+    runIde {
+        //ideDir = file("/Applications/Android Studio.app/Contents")
+        // Update memory
+        jvmArgs("-Xmx2048m", "-Xms512m")
     }
 }
 
