@@ -127,10 +127,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         refreshPromise.onSuccess { endpoints ->
             ApplicationManager.getApplication().invokeLater {
                 if (refreshRequestId.get() != requestId) return@invokeLater
+                val refreshStatus = endpointService.getLastRefreshStatus()
                 endpointList.setListData(endpoints.toTypedArray())
 
                 if (endpoints.isEmpty()) {
-                    showDetailsMessage(NO_ENDPOINTS_MESSAGE)
+                    showDetailsMessage("$NO_ENDPOINTS_MESSAGE\n\n$refreshStatus")
                     return@invokeLater
                 }
 
@@ -148,7 +149,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
                     selectFirst -> endpointList.selectedIndex = 0
                     else -> {
                         endpointList.clearSelection()
-                        showDetailsMessage(SELECT_ENDPOINT_MESSAGE)
+                        showDetailsMessage("$SELECT_ENDPOINT_MESSAGE\n\n$refreshStatus")
                     }
                 }
             }
@@ -157,7 +158,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
             ApplicationManager.getApplication().invokeLater {
                 if (refreshRequestId.get() != requestId) return@invokeLater
                 endpointList.setListData(emptyArray())
-                showDetailsMessage("$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}")
+                val refreshStatus = endpointService.getLastRefreshStatus()
+                showDetailsMessage(
+                    "$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}\n\n$refreshStatus"
+                )
             }
         }
     }
