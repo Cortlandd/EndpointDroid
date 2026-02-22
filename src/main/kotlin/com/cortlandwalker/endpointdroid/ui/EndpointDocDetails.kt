@@ -19,6 +19,10 @@ internal data class EndpointDocDetails(
     val hasDynamicUrl: Boolean,
     val hasBody: Boolean,
     val staticHeaders: List<String>,
+    val requestSchemaJson: String?,
+    val requestExampleJson: String?,
+    val responseSchemaJson: String?,
+    val responseExampleJson: String?,
     val authRequirement: AuthRequirement
 ) {
     /**
@@ -47,6 +51,10 @@ internal data class EndpointDocDetails(
             hasDynamicUrl = false,
             hasBody = false,
             staticHeaders = emptyList(),
+            requestSchemaJson = null,
+            requestExampleJson = null,
+            responseSchemaJson = null,
+            responseExampleJson = null,
             authRequirement = AuthRequirement.NONE
         )
     }

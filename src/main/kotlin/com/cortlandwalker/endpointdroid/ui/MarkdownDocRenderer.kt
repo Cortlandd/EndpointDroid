@@ -10,6 +10,11 @@ import java.net.URI
  * optional sections are omitted when empty and the header carries key badges.
  */
 internal object MarkdownDocRenderer {
+    private const val DEFAULT_API_ERROR_JSON = """{
+  "code": "INVALID_CREDENTIALS",
+  "message": "string"
+}"""
+
     /**
      * Renders endpoint details as markdown text for the right-side panel.
      */
@@ -18,6 +23,7 @@ internal object MarkdownDocRenderer {
         val pathForDisplay = normalizeDisplayPath(ep.path)
         val pathParams = collectPathParams(ep.path, details.pathParams)
         val queryParams = details.queryParams.distinct()
+        val headerRows = buildHeaderRows(details)
 
         val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
         val authHint = authHint(details.authRequirement)
@@ -69,12 +75,15 @@ internal object MarkdownDocRenderer {
                 appendLine("Query Parameters")
                 if (queryParams.isNotEmpty()) {
                     appendLine()
-                    appendLine("| name | type | required | default |")
-                    appendLine("|------|------|----------|---------|")
-                    queryParams.forEach { name ->
-                        // Query metadata shape is not fully modeled yet, so unknown columns stay explicit.
-                        appendLine("| $name | ? | ? | ? |")
-                    }
+                    appendLine(
+                        renderHtmlTable(
+                            headers = listOf("name", "type", "required", "default"),
+                            rows = queryParams.map { name ->
+                                // Query metadata shape is not fully modeled yet, so unknown columns stay explicit.
+                                listOf(name, "?", "?", "?")
+                            }
+                        )
+                    )
                 }
                 if (details.hasQueryMap) {
                     appendLine()
@@ -82,13 +91,20 @@ internal object MarkdownDocRenderer {
                 }
             }
 
-            if (details.headerParams.isNotEmpty() || details.hasHeaderMap) {
+            if (headerRows.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
                 appendLine("Header Parameters")
-                details.headerParams.distinct().forEach { name ->
-                    appendLine("- `$name`")
+                if (headerRows.isNotEmpty()) {
+                    appendLine()
+                    appendLine(
+                        renderHtmlTable(
+                            headers = listOf("name", "source", "value"),
+                            rows = headerRows
+                        )
+                    )
                 }
                 if (details.hasHeaderMap) {
+                    appendLine()
                     appendLine("- Dynamic entries via `@HeaderMap`")
                 }
             }
@@ -115,6 +131,46 @@ internal object MarkdownDocRenderer {
                 }
             }
 
+            if (details.hasBody || ep.requestType != null) {
+                appendLine()
+                appendLine("Request body")
+                appendLine()
+                appendLine("Type: ${renderType(ep.requestType)}")
+                appendLine("Content-Type: application/json")
+                details.requestSchemaJson?.let { schema ->
+                    appendLine()
+                    appendLine("Schema (from model)")
+                    appendLine("```json")
+                    appendLine(schema)
+                    appendLine("```")
+                }
+                details.requestExampleJson?.let { example ->
+                    appendLine()
+                    appendLine("Example")
+                    appendLine("```json")
+                    appendLine(example)
+                    appendLine("```")
+                }
+            }
+
+            appendLine()
+            appendLine("Response")
+            appendLine()
+            appendLine("Type: ${renderType(ep.responseType, fallback = "Unknown")}")
+            appendLine()
+            appendLine("Success")
+            appendLine("- 200 OK")
+            appendLine("```json")
+            appendLine(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
+            appendLine("```")
+            appendLine()
+            appendLine("Error")
+            appendLine("- 400 Bad Request -> ApiError")
+            appendLine("- 401 Unauthorized -> ApiError")
+            appendLine("```json")
+            appendLine(DEFAULT_API_ERROR_JSON)
+            appendLine("```")
+
             appendLine()
             appendLine("HTTP Client (.http)")
             appendLine("```http")
@@ -138,6 +194,48 @@ internal object MarkdownDocRenderer {
                 appendLine("- `.http` requests use `{{host}}`; define it in http-client.env.json.")
             }
         }
+    }
+
+    /**
+     * Builds header table rows from both dynamic and static Retrofit header declarations.
+     */
+    private fun buildHeaderRows(details: EndpointDocDetails): List<List<String>> {
+        val rows = mutableListOf<List<String>>()
+        details.headerParams.distinct().forEach { name ->
+            rows += listOf(name, "@Header", "{{${toPlaceholder(name)}}}")
+        }
+        details.staticHeaders.forEach { headerLine ->
+            val name = headerLine.substringBefore(':').trim()
+            val value = headerLine.substringAfter(':', "").trim()
+            rows += listOf(name.ifBlank { "(header)" }, "@Headers", value.ifBlank { "(set)" })
+        }
+        return rows
+    }
+
+    /**
+     * Renders HTML tables so Swing/JEditorPane shows explicit cell borders reliably.
+     */
+    private fun renderHtmlTable(headers: List<String>, rows: List<List<String>>): String {
+        val headerCells = headers.joinToString("") { title ->
+            "<th>${escapeHtml(title)}</th>"
+        }
+        val bodyRows = rows.joinToString("") { row ->
+            val cells = row.joinToString("") { value -> "<td>${escapeHtml(value)}</td>" }
+            "<tr>$cells</tr>"
+        }
+        return buildString {
+            append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">")
+            append("<tr>$headerCells</tr>")
+            append(bodyRows)
+            append("</table>")
+        }
+    }
+
+    private fun escapeHtml(value: String): String {
+        return value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
     }
 
     /**

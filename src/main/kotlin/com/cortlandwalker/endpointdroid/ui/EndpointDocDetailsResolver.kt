@@ -92,6 +92,10 @@ internal object EndpointDocDetailsResolver {
             hasHeaderMap -> EndpointDocDetails.AuthRequirement.OPTIONAL
             else -> EndpointDocDetails.AuthRequirement.NONE
         }
+        val requestType = extractBodyType(method) ?: endpoint.requestType
+        val responseType = extractResponseType(method) ?: endpoint.responseType
+        val requestSamples = EndpointJsonSampleResolver.build(project, requestType)
+        val responseSamples = EndpointJsonSampleResolver.build(project, responseType)
 
         val resolved = EndpointDocDetails(
             sourceFile = source.file,
@@ -109,6 +113,10 @@ internal object EndpointDocDetailsResolver {
             hasDynamicUrl = hasDynamicUrl,
             hasBody = hasBody,
             staticHeaders = staticHeaders.distinct(),
+            requestSchemaJson = requestSamples?.schemaJson,
+            requestExampleJson = requestSamples?.exampleJson,
+            responseSchemaJson = responseSamples?.schemaJson,
+            responseExampleJson = responseSamples?.exampleJson,
             authRequirement = authRequirement
         )
 
@@ -269,6 +277,61 @@ internal object EndpointDocDetailsResolver {
             ?.trim('"')
             ?.takeIf { it.isNotBlank() }
         return positional ?: fallback
+    }
+
+    /**
+     * Extracts the first Retrofit `@Body` parameter type from the method signature.
+     */
+    private fun extractBodyType(method: PsiMethod): String? {
+        val bodyParam = method.parameterList.parameters.firstOrNull { param ->
+            param.annotations.any { ann -> ann.qualifiedName == "retrofit2.http.Body" }
+        } ?: return null
+        return bodyParam.type.presentableText
+    }
+
+    /**
+     * Extracts a best-effort response payload type from Retrofit return signatures.
+     */
+    private fun extractResponseType(method: PsiMethod): String? {
+        val returnType = method.returnType ?: return null
+        val presentable = returnType.presentableText
+
+        fun unwrap(raw: String): String? {
+            val prefix = "$raw<"
+            if (!presentable.startsWith(prefix)) return null
+            return presentable.removePrefix(prefix).removeSuffix(">")
+        }
+
+        unwrap("Call")?.let { return it }
+        unwrap("Response")?.let { return it }
+
+        if (presentable == "Object" || presentable == "Any") {
+            extractSuspendContinuationType(method)?.let { return it }
+        }
+
+        return presentable
+    }
+
+    /**
+     * Extracts Kotlin suspend return type from trailing `Continuation<T>` parameter.
+     */
+    private fun extractSuspendContinuationType(method: PsiMethod): String? {
+        val continuationType = method.parameterList.parameters
+            .lastOrNull()
+            ?.type
+            ?.presentableText
+            ?: return null
+
+        val match = Regex("""(?:kotlin\.coroutines\.)?Continuation<(.+)>""")
+            .matchEntire(continuationType)
+            ?: return null
+
+        val raw = match.groupValues[1]
+            .removePrefix("? super ")
+            .removePrefix("? extends ")
+            .trim()
+
+        return raw.takeIf { it.isNotBlank() }
     }
 
     /**

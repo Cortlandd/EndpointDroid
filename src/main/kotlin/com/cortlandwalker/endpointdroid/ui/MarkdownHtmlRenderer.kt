@@ -24,7 +24,7 @@ internal object MarkdownHtmlRenderer {
         }.getOrElse {
             "<pre>${escapeHtml(markdown)}</pre>"
         }
-        val bodyWithTables = addTableBorders(renderedBody)
+        val bodyWithTables = normalizeTablesForSwing(addTableBorders(renderedBody))
 
         // Avoid CSS to prevent Swing HTML parser edge-case crashes.
         return "<html><body>$bodyWithTables</body></html>"
@@ -50,7 +50,38 @@ internal object MarkdownHtmlRenderer {
                 if (attrs.contains("border=", ignoreCase = true)) {
                     match.value
                 } else {
-                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"
+                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
+                }
+            }
+    }
+
+    /**
+     * Normalizes table markup to tags Swing HTML parser renders consistently.
+     */
+    private fun normalizeTablesForSwing(html: String): String {
+        val withoutTableSections = html
+            .replace("<thead>", "")
+            .replace("</thead>", "")
+            .replace("<tbody>", "")
+            .replace("</tbody>", "")
+
+        val withHeaderCellBorders = Regex("<th(\\s[^>]*)?>")
+            .replace(withoutTableSections) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<th$attrs border=\"1\">"
+                }
+            }
+
+        return Regex("<td(\\s[^>]*)?>")
+            .replace(withHeaderCellBorders) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<td$attrs border=\"1\">"
                 }
             }
     }
