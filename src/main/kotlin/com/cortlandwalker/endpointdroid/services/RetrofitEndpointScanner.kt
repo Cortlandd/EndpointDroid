@@ -142,6 +142,7 @@ object RetrofitEndpointScanner {
      *
      * v0 behavior:
      * - Unwraps `Call<T>` and `Response<T>` when those raw types are visible in presentable text.
+     * - Unwraps Kotlin suspend signatures compiled as `Object` + `Continuation<? super T>`.
      * - Otherwise returns the presentable return type.
      *
      * Notes:
@@ -161,6 +162,33 @@ object RetrofitEndpointScanner {
         unwrap("Call")?.let { return it }
         unwrap("Response")?.let { return it }
 
+        if (presentable == "Object" || presentable == "Any") {
+            extractSuspendContinuationType(method)?.let { return it }
+        }
+
         return presentable
+    }
+
+    /**
+     * Extracts the real Kotlin suspend return type from the trailing Continuation parameter.
+     */
+    private fun extractSuspendContinuationType(method: PsiMethod): String? {
+        val lastParamType = method.parameterList.parameters
+            .lastOrNull()
+            ?.type
+            ?.presentableText
+            ?: return null
+
+        val match = Regex("""(?:kotlin\.coroutines\.)?Continuation<(.+)>""")
+            .matchEntire(lastParamType)
+            ?: return null
+
+        val raw = match.groupValues[1]
+            .removePrefix("? super ")
+            .removePrefix("? extends ")
+            .trim()
+
+        if (raw.isBlank()) return null
+        return raw
     }
 }
