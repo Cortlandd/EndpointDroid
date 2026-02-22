@@ -463,7 +463,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun onImportButtonClicked(source: SourceTab) {
         when (source) {
             SourceTab.POSTMAN -> choosePostmanCollectionFile()
-            SourceTab.INSOMNIA -> showDetailsMessage(INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE)
+            SourceTab.INSOMNIA -> chooseInsomniaExportFile()
             SourceTab.SCANNED -> return
         }
     }
@@ -542,6 +542,77 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
                 }.onFailure { error ->
                     showDetailsMessage(
                         "Postman import failed: ${error.message ?: error::class.java.simpleName}"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Opens a file chooser and imports a selected Insomnia export JSON file.
+     */
+    private fun chooseInsomniaExportFile() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
+            title = "Select Insomnia Export JSON"
+            description = "Choose an Insomnia export file to import into EndpointDroid."
+        }
+
+        FileChooser.chooseFile(descriptor, project, null) { file ->
+            importInsomniaExport(file)
+        }
+    }
+
+    /**
+     * Imports Insomnia requests and updates the Insomnia source tab.
+     */
+    private fun importInsomniaExport(file: VirtualFile) {
+        showDetailsMessage("Importing Insomnia export...")
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val importResult = runCatching {
+                val text = file.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+                InsomniaCollectionImporter.importFromJson(file.name, text)
+            }
+
+            ApplicationManager.getApplication().invokeLater {
+                importResult.onSuccess { result ->
+                    insomniaEndpoints.forEach { endpointMetadata.remove(EndpointKey.from(it)) }
+                    insomniaDetailsByKey.clear()
+
+                    insomniaEndpoints = result.imported.map { it.endpoint }
+                    result.imported.forEach { imported ->
+                        val key = EndpointKey.from(imported.endpoint)
+                        insomniaDetailsByKey[key] = imported.details
+                        endpointMetadata[key] = EndpointListMetadata(
+                            authRequirement = imported.details.authRequirement,
+                            queryCount = maxOf(
+                                imported.details.queryParamDetails.size,
+                                imported.details.queryParams.size
+                            ),
+                            hasMultipart = imported.details.partParams.isNotEmpty() || imported.details.hasPartMap,
+                            hasFormFields = imported.details.fieldParams.isNotEmpty() || imported.details.hasFieldMap,
+                            baseUrlResolved = !imported.endpoint.baseUrl.isNullOrBlank(),
+                            partial = false
+                        )
+                    }
+
+                    if (selectedSourceTab() == SourceTab.INSOMNIA) {
+                        updateMethodFilterAvailability(insomniaEndpoints)
+                        applyFiltersAndGrouping(selectFirst = true, preferredSelection = null)
+                    }
+
+                    val importedCount = result.imported.size
+                    if (importedCount == 0) {
+                        showDetailsMessage(
+                            "No requests found in Insomnia export `${result.workspaceName}`."
+                        )
+                    } else {
+                        showDetailsMessage(
+                            "Imported $importedCount requests from Insomnia export `${result.workspaceName}`."
+                        )
+                    }
+                }.onFailure { error ->
+                    showDetailsMessage(
+                        "Insomnia import failed: ${error.message ?: error::class.java.simpleName}"
                     )
                 }
             }
@@ -1046,8 +1117,6 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
         const val SELECTED_SOURCE_TAB_KEY = "endpointdroid.selected.source.tab"
-        const val INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE =
-            "Insomnia import support is coming soon.\n\nPlanned: parse export and populate the Insomnia tab."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
         const val DETAILS_FAILED_PREFIX = "Endpoint details failed:"
         val METHOD_OPTIONS = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "HTTP")

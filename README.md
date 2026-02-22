@@ -17,6 +17,7 @@ The `EndpointDroid` Tool Window is split into two panes:
 - Right pane: endpoint details/docs view.
 - Left pane source tabs: `EndpointDroid`, `Postman`, `Insomnia` (selection is persisted per project).
 - `Postman` tab supports direct collection JSON import from the tab-local import button.
+- `Insomnia` tab supports direct export JSON import from the tab-local import button.
 
 Current flow:
 
