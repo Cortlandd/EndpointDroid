@@ -97,7 +97,15 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         endpointList.addListSelectionListener {
             if (it.valueIsAdjusting) return@addListSelectionListener
             val ep = endpointList.selectedValue ?: return@addListSelectionListener
-            renderMarkdownDetails(MarkdownDocRenderer.render(ep))
+            val markdown = ApplicationManager.getApplication().runReadAction<String> {
+                val details = if (DumbService.isDumb(project)) {
+                    EndpointDocDetails.empty()
+                } else {
+                    EndpointDocDetailsResolver.resolve(project, ep)
+                }
+                MarkdownDocRenderer.render(ep, details)
+            }
+            renderMarkdownDetails(markdown)
         }
         detailsPane.addHyperlinkListener { event ->
             if (event.eventType != HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
