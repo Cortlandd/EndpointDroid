@@ -21,7 +21,7 @@ internal object MarkdownDocRenderer {
 
         val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
         val authHint = authHint(details.authRequirement)
-        val paramsBadge = paramsBadge(pathParams.size, queryParams.size, details.hasQueryMap)
+        val paramsBadge = paramsBadge(pathParams.size, queryParams.size)
 
         val resolvedUrl = resolveUrl(ep.baseUrl, ep.path)
         val baseUrlValue = ep.baseUrl?.trimEnd('/') ?: "{{host}}"
@@ -45,16 +45,20 @@ internal object MarkdownDocRenderer {
             // Use markdown hard breaks so summary lines don't collapse into one paragraph.
             appendLine("Resolved URL: `$resolvedUrl`  ")
             appendLine("Base URL: `$baseUrlValue`  ($baseUrlSource)  ")
-            appendLine("Source: [$sourceLabel (open)]($functionLink)")
+            if (details.sourceFile != null && details.sourceLine != null) {
+                appendLine("Source: [$sourceLabel (open)]($functionLink)")
+            } else {
+                appendLine("Source: $sourceLabel")
+            }
             appendLine()
 
-            appendLine("### Types")
+            appendLine("Types")
             appendLine("- Request: ${renderType(ep.requestType)}")
             appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
             if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("### Path Parameters")
+                appendLine("Path Parameters")
                 pathParams.forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -62,7 +66,7 @@ internal object MarkdownDocRenderer {
 
             if (queryParams.isNotEmpty() || details.hasQueryMap) {
                 appendLine()
-                appendLine("### Query Parameters")
+                appendLine("Query Parameters")
                 if (queryParams.isNotEmpty()) {
                     appendLine()
                     appendLine("| name | type | required | default |")
@@ -80,7 +84,7 @@ internal object MarkdownDocRenderer {
 
             if (details.headerParams.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
-                appendLine("### Header Parameters")
+                appendLine("Header Parameters")
                 details.headerParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -91,7 +95,7 @@ internal object MarkdownDocRenderer {
 
             if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
                 appendLine()
-                appendLine("### Form Fields")
+                appendLine("Form Fields")
                 details.fieldParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -102,7 +106,7 @@ internal object MarkdownDocRenderer {
 
             if (details.partParams.isNotEmpty() || details.hasPartMap) {
                 appendLine()
-                appendLine("### Multipart Parts")
+                appendLine("Multipart Parts")
                 details.partParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -112,7 +116,7 @@ internal object MarkdownDocRenderer {
             }
 
             appendLine()
-            appendLine("### HTTP Client (.http)")
+            appendLine("HTTP Client (.http)")
             appendLine("```http")
             appendLine("### $serviceSimpleName.${ep.functionName}")
             appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
@@ -126,7 +130,7 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("### Notes")
+            appendLine("Notes")
             appendLine("- Authorization header is included only when required (from Retrofit annotations/headers).")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
@@ -180,21 +184,16 @@ internal object MarkdownDocRenderer {
     private fun computeConfidence(baseUrl: String?, fromConfig: Boolean): String {
         val normalized = baseUrl?.trim()
         if (normalized.isNullOrBlank()) return "Low"
-        return if (fromConfig) "High" else if (looksAbsoluteUrl(normalized)) "Medium" else "Low"
+        return if (fromConfig || looksAbsoluteUrl(normalized)) "High" else "Medium"
     }
 
     /**
      * Builds optional parameter summary badge text.
      */
-    private fun paramsBadge(pathCount: Int, queryCount: Int, hasQueryMap: Boolean): String? {
+    private fun paramsBadge(pathCount: Int, queryCount: Int): String? {
         val parts = mutableListOf<String>()
         if (pathCount > 0) parts += "path($pathCount)"
-        if (queryCount > 0) {
-            parts += "query($queryCount)"
-        } else if (hasQueryMap) {
-            // QueryMap means query params exist but names are runtime-defined.
-            parts += "query(*)"
-        }
+        if (queryCount > 0) parts += "query($queryCount)"
         return if (parts.isEmpty()) null else parts.joinToString(", ")
     }
 
