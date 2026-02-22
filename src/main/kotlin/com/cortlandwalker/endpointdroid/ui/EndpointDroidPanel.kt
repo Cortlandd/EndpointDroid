@@ -1,12 +1,11 @@
 package com.cortlandwalker.endpointdroid.ui
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
+import com.cortlandwalker.endpointdroid.services.EndpointService
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionPlaces
-import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -14,7 +13,7 @@ import java.awt.BorderLayout
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 
-class EndpointDroidPanel : JPanel(BorderLayout()) {
+class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val endpointList = JBList<Endpoint>()
     private val detailsArea = JBTextArea().apply {
@@ -23,12 +22,13 @@ class EndpointDroidPanel : JPanel(BorderLayout()) {
         wrapStyleWord = true
     }
 
+    private val endpointService = EndpointService.getInstance(project)
+
     init {
-        // Toolbar
         val actions = DefaultActionGroup().apply {
             add(object : DumbAwareAction("Refresh", "Re-scan endpoints", AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    loadMockEndpoints()
+                    refreshFromService(selectFirst = false)
                 }
             })
         }
@@ -38,13 +38,12 @@ class EndpointDroidPanel : JPanel(BorderLayout()) {
         toolbar.targetComponent = this
         add(toolbar.component, BorderLayout.NORTH)
 
-        // Split view
-        val listScroll = JBScrollPane(endpointList)
-        val detailsScroll = JBScrollPane(detailsArea)
+        val split = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            JBScrollPane(endpointList),
+            JBScrollPane(detailsArea)
+        ).apply { resizeWeight = 0.45 }
 
-        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listScroll, detailsScroll).apply {
-            resizeWeight = 0.45
-        }
         add(split, BorderLayout.CENTER)
 
         endpointList.addListSelectionListener {
@@ -53,37 +52,22 @@ class EndpointDroidPanel : JPanel(BorderLayout()) {
             detailsArea.caretPosition = 0
         }
 
-        // initial state
-        loadMockEndpoints()
+        refreshFromService(selectFirst = true)
     }
 
-    private fun loadMockEndpoints() {
-        val endpoints = listOf(
-            Endpoint(
-                httpMethod = "GET",
-                path = "/v1/users/{id}",
-                serviceFqn = "com.example.api.UserService",
-                functionName = "getUser",
-                requestType = null,
-                responseType = "UserResponse",
-                baseUrl = "https://api.example.com"
-            ),
-            Endpoint(
-                httpMethod = "POST",
-                path = "/v1/auth/login",
-                serviceFqn = "com.example.api.AuthService",
-                functionName = "login",
-                requestType = "LoginRequest",
-                responseType = "TokenResponse",
-                baseUrl = "https://api.example.com"
-            )
-        )
+    private fun refreshFromService(selectFirst: Boolean) {
+        endpointService.refresh()
+        val endpoints = endpointService.getEndpoints()
 
         endpointList.setListData(endpoints.toTypedArray())
-        if (endpoints.isNotEmpty()) {
-            endpointList.selectedIndex = 0
-        } else {
+
+        if (endpoints.isEmpty()) {
             detailsArea.text = ""
+            return
+        }
+
+        if (selectFirst) {
+            endpointList.selectedIndex = 0
         }
     }
 }

@@ -7,7 +7,7 @@ import com.intellij.ui.content.ContentFactory
 
 class EndpointDroidToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = EndpointDroidPanel()
+        val panel = EndpointDroidPanel(project)
         val content = ContentFactory.getInstance().createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
     }
