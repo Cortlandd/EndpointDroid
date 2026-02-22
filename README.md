@@ -75,11 +75,46 @@ Extracted fields (current):
 - `requestType` (first `@Body` parameter, best-effort)
 - `responseType` (best-effort; unwraps `Call<T>` and `Response<T>`)
 - `baseUrl` (global best-effort value for now)
+- source location (`file:line`, best-effort)
 
 Notes:
 
 - Kotlin suspend return type accuracy is still limited in v0 without Kotlin plugin dependency.
-- Parameter extraction for `@Path`, `@Query`, headers, multipart is planned before export.
+- Parameter extraction is best-effort and currently supports Retrofit method params and header hints.
+
+## Retrofit Params and Headers (Current)
+
+EndpointDroid currently inspects Retrofit parameter annotations and reflects them in the docs panel and HTTP draft.
+
+Supported parameter annotations:
+
+- `@Path` (and `@Param` fallback)
+- `@Query`, `@QueryMap`
+- `@Header`, `@HeaderMap`
+- `@Field`, `@FieldMap`
+- `@Part`, `@PartMap`
+- `@Body`
+- `@Url`
+
+Dynamic header example:
+
+```java
+import retrofit2.Call;
+import retrofit2.http.GET;
+import retrofit2.http.Header;
+
+public interface ApiService {
+    @GET("user/profile")
+    Call<YourDataType> getUserProfile(@Header("Authorization") String token);
+}
+```
+
+How EndpointDroid handles this:
+
+- Shows `Authorization` under header parameters for that endpoint.
+- Adds an Authorization line in HTTP draft when auth is inferred as required.
+- Does not force Authorization for endpoints where no auth hint is found.
+- Uses optional auth hint when only `@HeaderMap` is present.
 
 ## Base URL Handling
 
