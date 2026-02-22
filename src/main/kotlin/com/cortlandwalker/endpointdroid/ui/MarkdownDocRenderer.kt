@@ -139,21 +139,18 @@ internal object MarkdownDocRenderer {
             if (details.hasBody || ep.requestType != null) {
                 appendLine()
                 appendLine(sectionTitle("Request body"))
-                appendLine()
-                appendLine("Type: ${renderType(ep.requestType)}")
-                appendLine("Content-Type: application/json")
+                appendLine("- Type: ${renderType(ep.requestType)}")
+                appendLine("- Content-Type: application/json")
                 details.requestSchemaJson?.let { schema ->
                     appendLine()
-                    appendLine("Schema (from model)")
-                    appendLine()
+                    appendLine("Schema (from model):")
                     appendLine("```json")
                     appendLine(schema)
                     appendLine("```")
                 }
                 details.requestExampleJson?.let { example ->
                     appendLine()
-                    appendLine("Example")
-                    appendLine()
+                    appendLine("Example:")
                     appendLine("```json")
                     appendLine(example)
                     appendLine("```")
@@ -162,20 +159,17 @@ internal object MarkdownDocRenderer {
 
             appendLine()
             appendLine(sectionTitle("Response"))
-            appendLine()
-            appendLine("Type: ${renderType(ep.responseType, fallback = "Unknown")}")
+            appendLine("- Type: ${renderType(ep.responseType, fallback = "Unknown")}")
             appendLine()
             appendLine(sectionTitle("Success"))
-            appendLine("200 OK")
-            appendLine()
+            appendLine("- 200 OK")
             appendLine("```json")
             appendLine(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
             appendLine("```")
             appendLine()
             appendLine(sectionTitle("Error"))
-            appendLine("400 Bad Request -> ApiError")
-            appendLine("401 Unauthorized -> ApiError")
-            appendLine()
+            appendLine("- 400 Bad Request -> ApiError")
+            appendLine("- 401 Unauthorized -> ApiError")
             appendLine("```json")
             appendLine(DEFAULT_API_ERROR_JSON)
             appendLine("```")
@@ -265,7 +259,7 @@ internal object MarkdownDocRenderer {
     /**
      * Builds a bold section title that reliably starts a new markdown block.
      */
-    private fun sectionTitle(title: String): String = "### **$title**"
+    private fun sectionTitle(title: String): String = "**$title**"
 
     /**
      * Builds the compact one-line endpoint header with status badges.

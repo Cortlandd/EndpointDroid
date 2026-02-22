@@ -30,7 +30,9 @@ internal object MarkdownHtmlRenderer {
         @Suppress("UNUSED_VARIABLE")
         val ignore = project to virtualFile
 
-        val swingSafeBody = boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
+        val swingSafeBody = compactBlockSpacing(
+            boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
+        )
         return "<html><body>$swingSafeBody</body></html>"
     }
 
@@ -104,6 +106,39 @@ internal object MarkdownHtmlRenderer {
                 append(codeContent)
                 append("</font></pre>")
                 append("</td></tr></table>")
+            }
+        }
+    }
+
+    /**
+     * Tightens default block spacing from markdown HTML so sections read as a compact doc panel.
+     */
+    private fun compactBlockSpacing(html: String): String {
+        var compact = addOrMergeStyle(html, "p", "margin-top:0; margin-bottom:4px;")
+        compact = addOrMergeStyle(compact, "ul", "margin-top:2px; margin-bottom:6px;")
+        compact = addOrMergeStyle(compact, "ol", "margin-top:2px; margin-bottom:6px;")
+        compact = addOrMergeStyle(compact, "pre", "margin-top:4px; margin-bottom:6px;")
+        return compact
+    }
+
+    /**
+     * Appends style rules to a tag while preserving existing attributes produced by markdown conversion.
+     */
+    private fun addOrMergeStyle(html: String, tagName: String, styleRules: String): String {
+        val tagRegex = Regex("<$tagName(\\s[^>]*)?>", RegexOption.IGNORE_CASE)
+        return tagRegex.replace(html) { match ->
+            val attrs = match.groupValues.getOrElse(1) { "" }
+            val hasStyle = attrs.contains("style=", ignoreCase = true)
+            if (!hasStyle) {
+                "<$tagName$attrs style=\"$styleRules\">"
+            } else {
+                val styleRegex = Regex("style\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
+                val mergedAttrs = styleRegex.replace(attrs) { styleMatch ->
+                    val existing = styleMatch.groupValues[1].trim()
+                    val joined = if (existing.isEmpty()) styleRules else "$existing; $styleRules"
+                    "style=\"$joined\""
+                }
+                "<$tagName$mergedAttrs>"
             }
         }
     }
