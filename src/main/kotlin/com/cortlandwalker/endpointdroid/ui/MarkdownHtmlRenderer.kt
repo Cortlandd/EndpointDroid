@@ -39,7 +39,10 @@ internal object MarkdownHtmlRenderer {
      */
     fun toPlainHtml(markdown: String): String {
         val renderedBody = renderMarkdownBody(markdown)
-        return "<html><body>$renderedBody</body></html>"
+        // Keep only Swing compatibility fixes so parser-native markdown still renders
+        // tables and code blocks reliably in JEditorPane.
+        val swingCompatible = normalizeTablesForSwing(addTableBorders(renderedBody))
+        return "<html><body>$swingCompatible</body></html>"
     }
 
     /**
