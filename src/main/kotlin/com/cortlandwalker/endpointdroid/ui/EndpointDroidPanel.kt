@@ -2,8 +2,10 @@ package com.cortlandwalker.endpointdroid.ui
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
 import com.cortlandwalker.endpointdroid.services.EndpointService
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBList
@@ -39,8 +41,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         val actions = DefaultActionGroup().apply {
             add(object : DumbAwareAction("Refresh", "Re-scan endpoints", AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    // Keep selection if possible; Step 3 will refresh from scanner.
-                    refreshFromService(selectFirst = false)
+                    // Always give immediate feedback, then wait for smart mode before scanning indices.
+                    showDetailsMessage(INDEXING_MESSAGE)
+                    DumbService.getInstance(project).runWhenSmart {
+                        ApplicationManager.getApplication().invokeLater {
+                            refreshFromService(selectFirst = false)
+                        }
+                    }
                 }
             })
         }
@@ -67,8 +74,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
             detailsArea.caretPosition = 0
         }
 
-        // Initial load.
-        refreshFromService(selectFirst = true)
+        showDetailsMessage(INITIAL_MESSAGE)
     }
 
     /**
@@ -77,18 +83,64 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
      * @param selectFirst if true, selects the first endpoint after refresh (useful on initial load).
      */
     private fun refreshFromService(selectFirst: Boolean) {
-        endpointService.refresh()
-        val endpoints = endpointService.getEndpoints()
+        val previousSelection = endpointList.selectedValue
 
-        endpointList.setListData(endpoints.toTypedArray())
+        // Run the heavy scanning on a background thread
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val endpoints = runCatching {
+                endpointService.refresh()
+                endpointService.getEndpoints()
+            }.getOrElse { error ->
+                ApplicationManager.getApplication().invokeLater {
+                    endpointList.setListData(emptyArray())
+                    showDetailsMessage("$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}")
+                }
+                return@executeOnPooledThread
+            }
 
-        if (endpoints.isEmpty()) {
-            detailsArea.text = ""
-            return
+            // Switch back to UI thread to update the JList
+            ApplicationManager.getApplication().invokeLater {
+                endpointList.setListData(endpoints.toTypedArray())
+
+                if (endpoints.isEmpty()) {
+                    showDetailsMessage(NO_ENDPOINTS_MESSAGE)
+                    return@invokeLater
+                }
+
+                val preservedIndex = previousSelection?.let { previous ->
+                    endpoints.indexOfFirst {
+                        it.httpMethod == previous.httpMethod &&
+                            it.path == previous.path &&
+                            it.serviceFqn == previous.serviceFqn &&
+                            it.functionName == previous.functionName
+                    }
+                } ?: -1
+
+                when {
+                    preservedIndex >= 0 -> endpointList.selectedIndex = preservedIndex
+                    selectFirst -> endpointList.selectedIndex = 0
+                    else -> {
+                        endpointList.clearSelection()
+                        showDetailsMessage(SELECT_ENDPOINT_MESSAGE)
+                    }
+                }
+            }
         }
+    }
 
-        if (selectFirst) {
-            endpointList.selectedIndex = 0
-        }
+    /**
+     * Shows non-endpoint information in the details pane and resets scroll position.
+     */
+    private fun showDetailsMessage(message: String) {
+        detailsArea.text = message
+        detailsArea.caretPosition = 0
+    }
+
+    private companion object {
+        const val INITIAL_MESSAGE = "Press Refresh to scan endpoints."
+        const val INDEXING_MESSAGE = "Indexing..."
+        const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
+        const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
+        const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
     }
 }
