@@ -2,43 +2,35 @@ package com.cortlandwalker.endpointdroid.ui
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import org.intellij.plugins.markdown.ui.preview.html.MarkdownUtil
-import org.intellij.plugins.markdown.ui.preview.SourceTextPreprocessor
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.html.HtmlGenerator
+import org.intellij.markdown.parser.MarkdownParser
 
 /**
- * Converts markdown text into preview HTML using JetBrains Markdown plugin internals.
+ * Converts markdown text into lightweight HTML for the details pane.
  *
- * The renderer intentionally accepts markdown as the source of truth; HTML is only
- * generated at the final display step by built-in Markdown tooling.
+ * Markdown remains the source of truth. This renderer only transforms markdown
+ * into a Swing-friendly HTML representation for display.
  */
 internal object MarkdownHtmlRenderer {
+
     /**
-     * Generates provider-specific preview HTML by applying the active markdown source preprocessor.
+     * Converts markdown to HTML. The project/file parameters are accepted to keep call sites stable.
      */
-    fun toPreviewHtml(
-        project: Project,
-        virtualFile: VirtualFile,
-        markdown: String,
-        preprocessor: SourceTextPreprocessor,
-        createDocument: (String) -> com.intellij.openapi.editor.Document
-    ): String {
-        return runCatching {
-            val document = createDocument(markdown)
-            preprocessor.preprocessText(project, document, virtualFile)
+    fun toHtml(project: Project, virtualFile: VirtualFile, markdown: String): String {
+        val renderedBody = runCatching {
+            val flavour = GFMFlavourDescriptor()
+            val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
+            HtmlGenerator(markdown, tree, flavour).generateHtml()
         }.getOrElse {
             "<pre>${escapeHtml(markdown)}</pre>"
         }
-    }
 
-    /**
-     * Generates preview HTML for markdown text using the active IDE markdown implementation.
-     */
-    fun toHtml(project: Project, virtualFile: VirtualFile, markdown: String): String {
-        return runCatching {
-            MarkdownUtil.generateMarkdownHtml(virtualFile, markdown, project)
-        }.getOrElse { _ ->
-            "<pre>${escapeHtml(markdown)}</pre>"
-        }
+        // project/virtualFile are intentionally unused for this lightweight renderer path.
+        @Suppress("UNUSED_VARIABLE")
+        val ignore = project to virtualFile
+
+        return "<html><body>${normalizeTablesForSwing(addTableBorders(renderedBody))}</body></html>"
     }
 
     /**
@@ -49,5 +41,43 @@ internal object MarkdownHtmlRenderer {
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
+    }
+
+    /**
+     * Adds explicit border attributes so table cells are visible in Swing HTML rendering.
+     */
+    private fun addTableBorders(html: String): String {
+        return Regex("<table(\\s[^>]*)?>")
+            .replace(html) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
+                }
+            }
+    }
+
+    /**
+     * Normalizes table tags that Swing's HTML implementation handles inconsistently.
+     */
+    private fun normalizeTablesForSwing(html: String): String {
+        val withoutSections = html
+            .replace("<thead>", "")
+            .replace("</thead>", "")
+            .replace("<tbody>", "")
+            .replace("</tbody>", "")
+
+        val withThBorders = Regex("<th(\\s[^>]*)?>")
+            .replace(withoutSections) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) match.value else "<th$attrs border=\"1\">"
+            }
+
+        return Regex("<td(\\s[^>]*)?>")
+            .replace(withThBorders) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) match.value else "<td$attrs border=\"1\">"
+            }
     }
 }
