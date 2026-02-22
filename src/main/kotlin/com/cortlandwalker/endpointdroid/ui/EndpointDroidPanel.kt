@@ -11,11 +11,14 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
@@ -106,6 +109,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private var scannedEndpoints: List<Endpoint> = emptyList()
     private var postmanEndpoints: List<Endpoint> = emptyList()
     private var insomniaEndpoints: List<Endpoint> = emptyList()
+    private val postmanDetailsByKey = ConcurrentHashMap<EndpointKey, EndpointDocDetails>()
+    private val insomniaDetailsByKey = ConcurrentHashMap<EndpointKey, EndpointDocDetails>()
 
     init {
         // Tool window toolbar actions.
@@ -133,9 +138,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
         add(splitPane, BorderLayout.CENTER)
 
-        attachTreeSelectionListener(scannedTreeContext.tree)
-        attachTreeSelectionListener(postmanTreeContext.tree)
-        attachTreeSelectionListener(insomniaTreeContext.tree)
+        attachTreeSelectionListener(SourceTab.SCANNED, scannedTreeContext.tree)
+        attachTreeSelectionListener(SourceTab.POSTMAN, postmanTreeContext.tree)
+        attachTreeSelectionListener(SourceTab.INSOMNIA, insomniaTreeContext.tree)
         val restoredSource = SourceTab.fromStorageValue(properties.getValue(SELECTED_SOURCE_TAB_KEY)) ?: SourceTab.SCANNED
         sourceTabs.selectedIndex = restoredSource.ordinal
         sourceTabs.addChangeListener {
@@ -456,12 +461,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      * Handles source-specific import button clicks.
      */
     private fun onImportButtonClicked(source: SourceTab) {
-        val message = when (source) {
-            SourceTab.POSTMAN -> POSTMAN_IMPORT_PLACEHOLDER_MESSAGE
-            SourceTab.INSOMNIA -> INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE
+        when (source) {
+            SourceTab.POSTMAN -> choosePostmanCollectionFile()
+            SourceTab.INSOMNIA -> showDetailsMessage(INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE)
             SourceTab.SCANNED -> return
         }
-        showDetailsMessage(message)
     }
 
     private fun importButtonLabel(source: SourceTab): String {
@@ -469,6 +473,78 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
             SourceTab.POSTMAN -> "Import Postman Collection"
             SourceTab.INSOMNIA -> "Import Insomnia Export"
             SourceTab.SCANNED -> "Import"
+        }
+    }
+
+    /**
+     * Opens a file chooser and imports a selected Postman collection JSON file.
+     */
+    private fun choosePostmanCollectionFile() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().apply {
+            title = "Select Postman Collection JSON"
+            description = "Choose a Postman collection file to import into EndpointDroid."
+        }
+
+        FileChooser.chooseFile(descriptor, project, null) { file ->
+            importPostmanCollection(file)
+        }
+    }
+
+    /**
+     * Imports Postman collection endpoints and updates the Postman source tab.
+     */
+    private fun importPostmanCollection(file: VirtualFile) {
+        showDetailsMessage("Importing Postman collection...")
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val importResult = runCatching {
+                val text = file.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+                PostmanCollectionImporter.importFromJson(file.name, text)
+            }
+
+            ApplicationManager.getApplication().invokeLater {
+                importResult.onSuccess { result ->
+                    // Remove old Postman metadata/details so badges match the latest import.
+                    postmanEndpoints.forEach { endpointMetadata.remove(EndpointKey.from(it)) }
+                    postmanDetailsByKey.clear()
+
+                    postmanEndpoints = result.imported.map { it.endpoint }
+                    result.imported.forEach { imported ->
+                        val key = EndpointKey.from(imported.endpoint)
+                        postmanDetailsByKey[key] = imported.details
+                        endpointMetadata[key] = EndpointListMetadata(
+                            authRequirement = imported.details.authRequirement,
+                            queryCount = maxOf(
+                                imported.details.queryParamDetails.size,
+                                imported.details.queryParams.size
+                            ),
+                            hasMultipart = imported.details.partParams.isNotEmpty() || imported.details.hasPartMap,
+                            hasFormFields = imported.details.fieldParams.isNotEmpty() || imported.details.hasFieldMap,
+                            baseUrlResolved = !imported.endpoint.baseUrl.isNullOrBlank(),
+                            partial = false
+                        )
+                    }
+
+                    if (selectedSourceTab() == SourceTab.POSTMAN) {
+                        updateMethodFilterAvailability(postmanEndpoints)
+                        applyFiltersAndGrouping(selectFirst = true, preferredSelection = null)
+                    }
+
+                    val importedCount = result.imported.size
+                    if (importedCount == 0) {
+                        showDetailsMessage(
+                            "No requests found in Postman collection `${result.collectionName}`."
+                        )
+                    } else {
+                        showDetailsMessage(
+                            "Imported $importedCount requests from `${result.collectionName}`."
+                        )
+                    }
+                }.onFailure { error ->
+                    showDetailsMessage(
+                        "Postman import failed: ${error.message ?: error::class.java.simpleName}"
+                    )
+                }
+            }
         }
     }
 
@@ -751,7 +827,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     /**
      * Adds shared endpoint selection behavior to each source tree.
      */
-    private fun attachTreeSelectionListener(tree: Tree) {
+    private fun attachTreeSelectionListener(source: SourceTab, tree: Tree) {
         tree.addTreeSelectionListener {
             val endpoint = selectedEndpoint() ?: run {
                 selectedServiceGroup()?.let { group ->
@@ -766,11 +842,23 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
             ApplicationManager.getApplication().executeOnPooledThread {
                 val markdown = runCatching {
-                    val details = if (DumbService.isDumb(project)) {
-                        EndpointDocDetails.empty()
-                    } else {
-                        ApplicationManager.getApplication().runReadAction<EndpointDocDetails> {
-                            EndpointDocDetailsResolver.resolve(project, endpoint)
+                    val details = when (source) {
+                        SourceTab.SCANNED -> {
+                            if (DumbService.isDumb(project)) {
+                                EndpointDocDetails.empty()
+                            } else {
+                                ApplicationManager.getApplication().runReadAction<EndpointDocDetails> {
+                                    EndpointDocDetailsResolver.resolve(project, endpoint)
+                                }
+                            }
+                        }
+                        SourceTab.POSTMAN -> {
+                            postmanDetailsByKey[EndpointKey.from(endpoint)]
+                                ?: EndpointDocDetails.empty().copy(providerLabel = "Postman")
+                        }
+                        SourceTab.INSOMNIA -> {
+                            insomniaDetailsByKey[EndpointKey.from(endpoint)]
+                                ?: EndpointDocDetails.empty().copy(providerLabel = "Insomnia")
                         }
                     }
                     MarkdownDocRenderer.render(endpoint, details)
@@ -958,8 +1046,6 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
         const val SELECTED_SOURCE_TAB_KEY = "endpointdroid.selected.source.tab"
-        const val POSTMAN_IMPORT_PLACEHOLDER_MESSAGE =
-            "Postman import support is coming soon.\n\nPlanned: parse collection and populate the Postman tab."
         const val INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE =
             "Insomnia import support is coming soon.\n\nPlanned: parse export and populate the Insomnia tab."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
