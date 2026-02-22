@@ -10,6 +10,8 @@ import java.net.URI
  * optional sections are omitted when empty and the header carries key badges.
  */
 internal object MarkdownDocRenderer {
+    private const val MAX_JSON_PREVIEW_LINES = 40
+    private const val MAX_JSON_PREVIEW_CHARS = 3500
     private const val DEFAULT_API_ERROR_JSON = """{
   "code": "INVALID_CREDENTIALS",
   "message": "string"
@@ -42,23 +44,28 @@ internal object MarkdownDocRenderer {
         }
 
         val serviceSimpleName = ep.serviceFqn.substringAfterLast('.')
+        val serviceLink = EndpointDocLinks.serviceUrl(ep.serviceFqn)
         val functionLink = EndpointDocLinks.functionUrl(ep.serviceFqn, ep.functionName)
         val sourceLabel = if (details.sourceFile != null && details.sourceLine != null) {
             "${details.sourceFile}:${details.sourceLine}"
         } else {
             "${ep.serviceFqn}#${ep.functionName}"
         }
+        val requestSchemaPreview = previewJson(details.requestSchemaJson)
+        val requestExamplePreview = previewJson(details.requestExampleJson)
+        val successResponsePreview = previewJson(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
+        val errorResponsePreview = previewJson(DEFAULT_API_ERROR_JSON)
 
         return buildString {
             appendLine(buildHeaderLine(method, pathForDisplay, providerLabel, authHint, paramsBadge, confidence))
             appendLine()
-            // Use markdown hard breaks so summary lines don't collapse into one paragraph.
-            appendLine("Resolved URL: `$resolvedUrl`  ")
-            appendLine("Base URL: `$baseUrlValue`  ($baseUrlSource)  ")
+            appendLine("- Resolved URL: `$resolvedUrl`")
+            appendLine("- Base URL: `$baseUrlValue` ($baseUrlSource)")
+            appendLine("- Service: [`$serviceSimpleName`]($serviceLink)")
             if (details.sourceFile != null && details.sourceLine != null) {
-                appendLine("Source: [$sourceLabel (open)]($functionLink)")
+                appendLine("- Source: [$sourceLabel (open)]($functionLink)")
             } else {
-                appendLine("Source: $sourceLabel")
+                appendLine("- Source: $sourceLabel")
             }
             appendLine()
 
@@ -139,44 +146,6 @@ internal object MarkdownDocRenderer {
                 }
             }
 
-            if (details.hasBody || ep.requestType != null) {
-                appendLine()
-                appendLine(sectionTitle("Request body"))
-                appendLine("- Type: ${renderType(ep.requestType)}")
-                appendLine("- Content-Type: application/json")
-                details.requestSchemaJson?.let { schema ->
-                    appendLine()
-                    appendLine("Schema (from model):")
-                    appendLine("```json")
-                    appendLine(schema)
-                    appendLine("```")
-                }
-                details.requestExampleJson?.let { example ->
-                    appendLine()
-                    appendLine("Example:")
-                    appendLine("```json")
-                    appendLine(example)
-                    appendLine("```")
-                }
-            }
-
-            appendLine()
-            appendLine(sectionTitle("Response"))
-            appendLine("- Type: ${renderType(ep.responseType, fallback = "Unknown")}")
-            appendLine()
-            appendLine(sectionTitle("Success"))
-            appendLine("- 200 OK")
-            appendLine("```json")
-            appendLine(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
-            appendLine("```")
-            appendLine()
-            appendLine(sectionTitle("Error"))
-            appendLine("- 400 Bad Request -> ApiError")
-            appendLine("- 401 Unauthorized -> ApiError")
-            appendLine("```json")
-            appendLine(DEFAULT_API_ERROR_JSON)
-            appendLine("```")
-
             appendLine()
             appendLine(sectionTitle("HTTP Client (.http)"))
             appendLine()
@@ -192,6 +161,53 @@ internal object MarkdownDocRenderer {
             }
             appendLine("```")
 
+            if (details.hasBody || ep.requestType != null) {
+                appendLine()
+                appendLine(sectionTitle("Request body"))
+                appendLine("- Type: ${renderType(ep.requestType)}")
+                appendLine("- Content-Type: application/json")
+                details.requestSchemaJson?.let {
+                    appendLine()
+                    appendLine("Schema (from model):")
+                    appendLine("```json")
+                    appendLine(requestSchemaPreview.content)
+                    appendLine("```")
+                    if (requestSchemaPreview.truncated) {
+                        appendLine("_Schema preview truncated for readability._")
+                    }
+                }
+                details.requestExampleJson?.let {
+                    appendLine()
+                    appendLine("Example:")
+                    appendLine("```json")
+                    appendLine(requestExamplePreview.content)
+                    appendLine("```")
+                    if (requestExamplePreview.truncated) {
+                        appendLine("_Example preview truncated for readability._")
+                    }
+                }
+            }
+
+            appendLine()
+            appendLine(sectionTitle("Response"))
+            appendLine("- Type: ${renderType(ep.responseType, fallback = "Unknown")}")
+            appendLine()
+            appendLine(sectionTitle("Success"))
+            appendLine("- 200 OK")
+            appendLine("```json")
+            appendLine(successResponsePreview.content)
+            appendLine("```")
+            if (successResponsePreview.truncated) {
+                appendLine("_Response preview truncated for readability._")
+            }
+            appendLine()
+            appendLine(sectionTitle("Error"))
+            appendLine("- 400 Bad Request -> ApiError")
+            appendLine("- 401 Unauthorized -> ApiError")
+            appendLine("```json")
+            appendLine(errorResponsePreview.content)
+            appendLine("```")
+
             appendLine()
             appendLine(sectionTitle("Notes"))
             appendLine("- Authorization header is included only when required (from endpoint metadata/headers).")
@@ -199,6 +215,9 @@ internal object MarkdownDocRenderer {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
             } else {
                 appendLine("- `.http` requests use `{{host}}`; define it in http-client.env.json.")
+            }
+            if (successResponsePreview.truncated || requestSchemaPreview.truncated || requestExamplePreview.truncated) {
+                appendLine("- Large JSON payloads are shown as previews; open linked source types for full shape.")
             }
         }
     }
@@ -418,4 +437,30 @@ internal object MarkdownDocRenderer {
             .lowercase()
             .ifBlank { "value" }
     }
+
+    /**
+     * Truncates large JSON blocks to keep the details panel scannable.
+     */
+    private fun previewJson(json: String?): JsonPreview {
+        val source = json?.trim().takeUnless { it.isNullOrEmpty() } ?: "{}"
+        val lines = source.lines()
+        val limitedByLines = if (lines.size > MAX_JSON_PREVIEW_LINES) {
+            lines.take(MAX_JSON_PREVIEW_LINES).joinToString("\n")
+        } else {
+            source
+        }
+        val limitedByChars = if (limitedByLines.length > MAX_JSON_PREVIEW_CHARS) {
+            limitedByLines.take(MAX_JSON_PREVIEW_CHARS)
+        } else {
+            limitedByLines
+        }
+        val truncated = limitedByChars.length < source.length
+        val content = if (truncated) "$limitedByChars\n..." else limitedByChars
+        return JsonPreview(content = content, truncated = truncated)
+    }
+
+    private data class JsonPreview(
+        val content: String,
+        val truncated: Boolean
+    )
 }
