@@ -12,10 +12,6 @@ import java.net.URI
 internal object MarkdownDocRenderer {
     private const val MAX_JSON_PREVIEW_LINES = 40
     private const val MAX_JSON_PREVIEW_CHARS = 3500
-    private const val DEFAULT_API_ERROR_JSON = """{
-  "code": "INVALID_CREDENTIALS",
-  "message": "string"
-}"""
 
     /**
      * Renders endpoint details as markdown text for the right-side panel.
@@ -52,8 +48,7 @@ internal object MarkdownDocRenderer {
         }
         val requestSchemaPreview = previewJson(details.requestSchemaJson)
         val requestExamplePreview = previewJson(details.requestExampleJson)
-        val successResponsePreview = previewJson(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
-        val errorResponsePreview = previewJson(DEFAULT_API_ERROR_JSON)
+        val successResponsePreview = previewJsonOrNull(details.responseExampleJson ?: details.responseSchemaJson)
 
         return buildString {
             appendLine(buildHeaderLine(method, pathForDisplay, providerLabel, authHint, paramsBadge))
@@ -206,17 +201,18 @@ internal object MarkdownDocRenderer {
             appendLine()
             appendLine(sectionTitle("Success"))
             appendLine("- 200 OK")
-            appendLine()
-            appendLine(fencedCodeBlock("json", successResponsePreview.content))
-            if (successResponsePreview.truncated) {
-                appendLine("_Response preview truncated for readability._")
+            if (successResponsePreview != null) {
+                appendLine()
+                appendLine(fencedCodeBlock("json", successResponsePreview.content))
+                if (successResponsePreview.truncated) {
+                    appendLine("_Response preview truncated for readability._")
+                }
+            } else {
+                appendLine("- No response sample detected.")
             }
             appendLine()
             appendLine(sectionTitle("Error"))
-            appendLine("- 400 Bad Request -> ApiError")
-            appendLine("- 401 Unauthorized -> ApiError")
-            appendLine()
-            appendLine(fencedCodeBlock("json", errorResponsePreview.content))
+            appendLine("- No error response sample detected.")
 
             appendLine()
             appendLine(sectionTitle("Notes"))
@@ -226,7 +222,7 @@ internal object MarkdownDocRenderer {
             } else {
                 appendLine("- `.http` requests use `{{host}}`; define it in http-client.env.json.")
             }
-            if (successResponsePreview.truncated || requestSchemaPreview.truncated || requestExamplePreview.truncated) {
+            if ((successResponsePreview?.truncated == true) || requestSchemaPreview.truncated || requestExamplePreview.truncated) {
                 appendLine("- Large JSON payloads are shown as previews; open linked source types for full shape.")
             }
         }
@@ -457,6 +453,14 @@ internal object MarkdownDocRenderer {
         val truncated = limitedByChars.length < source.length
         val content = if (truncated) "$limitedByChars\n..." else limitedByChars
         return JsonPreview(content = content, truncated = truncated)
+    }
+
+    /**
+     * Returns JSON preview only when actual JSON content is present.
+     */
+    private fun previewJsonOrNull(json: String?): JsonPreview? {
+        val source = json?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return previewJson(source)
     }
 
     private data class JsonPreview(
