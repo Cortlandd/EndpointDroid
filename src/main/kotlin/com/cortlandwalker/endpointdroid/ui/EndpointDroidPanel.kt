@@ -26,6 +26,7 @@ import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ListSelectionModel
 import javax.swing.event.HyperlinkEvent
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Main UI for the EndpointDroid tool window.
@@ -56,6 +57,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     private val endpointService = EndpointService.getInstance(project)
+    private val detailsRenderRequestId = AtomicLong(0)
 
     init {
         // Tool window toolbar actions.
@@ -85,15 +87,29 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         endpointList.addListSelectionListener {
             if (it.valueIsAdjusting) return@addListSelectionListener
             val ep = endpointList.selectedValue ?: return@addListSelectionListener
-            val markdown = ApplicationManager.getApplication().runReadAction<String> {
-                val details = if (DumbService.isDumb(project)) {
-                    EndpointDocDetails.empty()
-                } else {
-                    EndpointDocDetailsResolver.resolve(project, ep)
+            val requestId = detailsRenderRequestId.incrementAndGet()
+            showDetailsMessage(LOADING_DETAILS_MESSAGE)
+
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val markdown = runCatching {
+                    val details = if (DumbService.isDumb(project)) {
+                        EndpointDocDetails.empty()
+                    } else {
+                        ApplicationManager.getApplication().runReadAction<EndpointDocDetails> {
+                            EndpointDocDetailsResolver.resolve(project, ep)
+                        }
+                    }
+                    MarkdownDocRenderer.render(ep, details)
+                }.getOrElse { error ->
+                    "$DETAILS_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}"
                 }
-                MarkdownDocRenderer.render(ep, details)
+
+                ApplicationManager.getApplication().invokeLater {
+                    if (detailsRenderRequestId.get() != requestId) return@invokeLater
+                    if (endpointList.selectedValue != ep) return@invokeLater
+                    renderMarkdownDetails(markdown)
+                }
             }
-            renderMarkdownDetails(markdown)
         }
         detailsPane.addHyperlinkListener { event ->
             if (event.eventType != HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
@@ -169,12 +185,14 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     private fun handleDetailsHyperlink(link: String) {
         val target = EndpointDocLinks.parse(link) ?: return
         DumbService.getInstance(project).runWhenSmart {
-            val descriptor = ApplicationManager.getApplication().runReadAction<OpenFileDescriptor?> {
-                resolveNavigationDescriptor(target)
-            } ?: return@runWhenSmart
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val descriptor = ApplicationManager.getApplication().runReadAction<OpenFileDescriptor?> {
+                    resolveNavigationDescriptor(target)
+                } ?: return@executeOnPooledThread
 
-            ApplicationManager.getApplication().invokeLater {
-                descriptor.navigate(true)
+                ApplicationManager.getApplication().invokeLater {
+                    descriptor.navigate(true)
+                }
             }
         }
     }
@@ -291,9 +309,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         const val DEFAULT_SPLIT_WEIGHT = 0.45
         const val INITIAL_MESSAGE = "Press Refresh to scan endpoints."
         const val INDEXING_MESSAGE = "Indexing..."
+        const val LOADING_DETAILS_MESSAGE = "Loading endpoint details..."
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
+        const val DETAILS_FAILED_PREFIX = "Endpoint details failed:"
         val ignoredTypeNames = setOf(
             "String",
             "Int",
