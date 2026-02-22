@@ -19,20 +19,23 @@ object MarkdownDocRenderer {
         } else {
             base.trimEnd('/') + ep.path
         }
+        val serviceLink = EndpointDocLinks.serviceUrl(ep.serviceFqn)
+        val functionLink = EndpointDocLinks.functionUrl(ep.serviceFqn, ep.functionName)
 
         return buildString {
             appendLine("# Endpoint")
             appendLine()
             appendLine("- **Method:** ${ep.httpMethod.uppercase()}")
             appendLine("- **Path:** `${ep.path}`")
-            appendLine("- **Service:** `${ep.serviceFqn}`")
-            appendLine("- **Function:** `${ep.functionName}`")
+            appendLine("- **Service:** [`${ep.serviceFqn}`]($serviceLink)")
+            appendLine("- **Function:** [`${ep.functionName}`]($functionLink)")
+            appendLine("- **Source:** [Open function declaration]($functionLink)")
             appendLine("- **Base URL:** `${ep.baseUrl ?: "{{host}}"}`")
             appendLine("- **Resolved URL:** `$url`")
             appendLine()
             appendLine("## Types")
-            appendLine("- **Request:** ${ep.requestType ?: "None"}")
-            appendLine("- **Response:** ${ep.responseType ?: "Unknown"}")
+            appendLine("- **Request:** ${renderTypeLink(ep.requestType)}")
+            appendLine("- **Response:** ${renderTypeLink(ep.responseType)}")
             appendLine()
             appendLine("## HTTP Client Draft")
             appendLine("```http")
@@ -45,5 +48,14 @@ object MarkdownDocRenderer {
             appendLine("- Replace `{{token}}` with a real auth token when needed.")
             appendLine("- If Base URL is `{{host}}`, add `endpointdroid.yaml` in your project root.")
         }
+    }
+
+    /**
+     * Renders a type as a clickable link when available.
+     */
+    private fun renderTypeLink(type: String?): String {
+        if (type == null) return "None"
+        val link = EndpointDocLinks.typeUrl(type)
+        return "[`$type`]($link)"
     }
 }
