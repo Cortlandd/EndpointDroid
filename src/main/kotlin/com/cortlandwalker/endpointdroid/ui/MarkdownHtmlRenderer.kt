@@ -41,7 +41,7 @@ internal object MarkdownHtmlRenderer {
         val renderedBody = renderMarkdownBody(markdown)
         // Keep only Swing compatibility fixes so parser-native markdown still renders
         // tables and code blocks reliably in JEditorPane.
-        val swingCompatible = normalizeTablesForSwing(addTableBorders(renderedBody))
+        val swingCompatible = boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
         return "<html><body>$swingCompatible</body></html>"
     }
 
