@@ -51,7 +51,10 @@ Completed:
 In progress next:
 
 - Step 5: improve endpoint presentation (left list UX + richer markdown details).
-- Step 6: export selected/all endpoints to JetBrains HTTP Client files.
+- Step 6: continue docs/list quality and extraction details.
+- Step 7: make scanning fast + non-blocking.
+- Step 8: improve Kotlin-first scanning accuracy.
+- Step 9: export selected/all endpoints to JetBrains HTTP Client files.
 
 ## Endpoint Discovery (Current)
 
@@ -76,7 +79,7 @@ Extracted fields (current):
 Notes:
 
 - Kotlin suspend return type accuracy is still limited in v0 without Kotlin plugin dependency.
-- Parameter extraction for `@Path`, `@Query`, headers, multipart is planned (Step 5/6 refinement).
+- Parameter extraction for `@Path`, `@Query`, headers, multipart is planned before export.
 
 ## Base URL Handling
 
@@ -134,14 +137,15 @@ If config is missing, EndpointDroid scans project source for:
 ## Roadmap (Planned)
 
 - Step 5: richer endpoint list/docs presentation and parameter extraction.
-- Step 6: export `.http` + `http-client.env.json`.
+- Step 6: docs/list refinement and UX cleanup.
 - Step 7: background scan performance/caching improvements.
 - Step 8: Kotlin/K2 accuracy and dependency reintroduction.
-- Step 9: `EndpointProvider` architecture.
-- Step 10: additional providers.
-- Step 11: Postman/Insomnia importers.
-- Step 12: UX polish, settings, and tests.
-- Step 13: request stubbing architecture and generation workflow.
+- Step 9: export `.http` + `http-client.env.json`.
+- Step 10: `EndpointProvider` architecture.
+- Step 11: additional providers.
+- Step 12: Postman/Insomnia importers.
+- Step 13: UX polish, settings, and tests.
+- Step 14: request stubbing architecture and generation workflow.
 
 ## Development
 
