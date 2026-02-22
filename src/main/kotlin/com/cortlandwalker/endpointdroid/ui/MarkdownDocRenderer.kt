@@ -42,18 +42,18 @@ internal object MarkdownDocRenderer {
         return buildString {
             appendLine(buildHeaderLine(method, pathForDisplay, authHint, paramsBadge, confidence))
             appendLine()
-            appendLine("- **Resolved URL:** `$resolvedUrl`")
-            appendLine("- **Base URL:** `$baseUrlValue` ($baseUrlSource)")
-            appendLine("- **Source:** [$sourceLabel (open)]($functionLink)")
+            appendLine("Resolved URL: $resolvedUrl")
+            appendLine("Base URL: $baseUrlValue  ($baseUrlSource)")
+            appendLine("Source: [$sourceLabel (open)]($functionLink)")
             appendLine()
 
-            appendLine("## Types")
+            appendLine("Types")
             appendLine("- Request: ${renderType(ep.requestType)}")
             appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
             if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("## Path Parameters")
+                appendLine("Path Parameters")
                 pathParams.forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -61,9 +61,14 @@ internal object MarkdownDocRenderer {
 
             if (queryParams.isNotEmpty() || details.hasQueryMap) {
                 appendLine()
-                appendLine("## Query Parameters")
-                queryParams.forEach { name ->
-                    appendLine("- `$name`")
+                appendLine("Query Parameters")
+                if (queryParams.isNotEmpty()) {
+                    appendLine("| name | type | required | default |")
+                    appendLine("|------|------|----------|---------|")
+                    queryParams.forEach { name ->
+                        // Query metadata shape is not fully modeled yet, so unknown columns stay explicit.
+                        appendLine("| $name | ? | ? | ? |")
+                    }
                 }
                 if (details.hasQueryMap) {
                     appendLine("- Dynamic entries via `@QueryMap`")
@@ -72,7 +77,7 @@ internal object MarkdownDocRenderer {
 
             if (details.headerParams.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
-                appendLine("## Header Parameters")
+                appendLine("Header Parameters")
                 details.headerParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -83,7 +88,7 @@ internal object MarkdownDocRenderer {
 
             if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
                 appendLine()
-                appendLine("## Form Fields")
+                appendLine("Form Fields")
                 details.fieldParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -94,7 +99,7 @@ internal object MarkdownDocRenderer {
 
             if (details.partParams.isNotEmpty() || details.hasPartMap) {
                 appendLine()
-                appendLine("## Multipart Parts")
+                appendLine("Multipart Parts")
                 details.partParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -104,7 +109,7 @@ internal object MarkdownDocRenderer {
             }
 
             appendLine()
-            appendLine("## HTTP Client (.http)")
+            appendLine("HTTP Client (.http)")
             appendLine("```http")
             appendLine("### $serviceSimpleName.${ep.functionName}")
             appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
@@ -118,12 +123,12 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("## Notes")
-            appendLine("- Authorization header is included only when required from Retrofit annotations/headers.")
+            appendLine("Notes")
+            appendLine("- Authorization header is included only when required (from Retrofit annotations/headers).")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
             } else {
-                appendLine("- `.http` uses `{{host}}` by design; set it in http-client.env.json.")
+                appendLine("- `.http` requests use `{{host}}`; define it in http-client.env.json.")
             }
         }
     }
