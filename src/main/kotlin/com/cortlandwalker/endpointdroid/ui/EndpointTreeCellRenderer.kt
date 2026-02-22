@@ -4,7 +4,6 @@ import com.cortlandwalker.endpointdroid.model.Endpoint
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
-import java.awt.Component
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -39,7 +38,11 @@ internal class EndpointTreeCellRenderer(
 
     private fun renderEndpoint(endpoint: Endpoint, selected: Boolean) {
         val method = endpoint.httpMethod.uppercase()
-        append("[${method.padEnd(METHOD_WIDTH)}]", methodAttributes(method))
+        append("[$method]", methodAttributes(method))
+        val trailingPad = (METHOD_WIDTH - method.length).coerceAtLeast(0)
+        if (trailingPad > 0) {
+            append(" ".repeat(trailingPad), SimpleTextAttributes.REGULAR_ATTRIBUTES)
+        }
         append("  ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
         append(
             normalizeDisplayPath(endpoint.path),
