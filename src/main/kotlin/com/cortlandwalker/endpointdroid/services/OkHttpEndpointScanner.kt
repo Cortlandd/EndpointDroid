@@ -31,6 +31,15 @@ internal object OkHttpEndpointScanner {
     private val urlCallRegex = Regex("""\.url\s*\(\s*([^)]+?)\s*\)""")
     private val methodOverrideRegex = Regex("""\.method\s*\(\s*"([A-Za-z]+)"\s*,\s*([^)]+)\)""")
     private val verbCallRegex = Regex("""\.(get|post|put|patch|delete|head)\s*\(""", RegexOption.IGNORE_CASE)
+    private val okHttpMethodBaseClassRegex = Regex(
+        """class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([\s\S]*?)\)\s*:\s*OkHttpMethodBase\s*\(([^)]*)\)\s*\{([\s\S]*?)\n\}"""
+    )
+    private val applyTypeRegex = Regex(
+        """override\s+fun\s+applyType\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*Request\.Builder\s*\)\s*\{([\s\S]*?)\}"""
+    )
+    private val constructorParamRegex = Regex(
+        """(?:val|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^=,\n)]+)"""
+    )
     private val kotlinStringConstantRegex =
         Regex("(?:const\\s+)?val\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*\"([^\"]+)\"")
     private val javaStringConstantRegex =
@@ -79,6 +88,15 @@ internal object OkHttpEndpointScanner {
                     results += endpoint
                 }
             }
+
+            scanOkHttpMethodBaseSubclasses(
+                text = text,
+                packageName = packageName,
+                constants = constants,
+                baseUrlFallback = baseUrlFallback,
+                seenKeys = seenKeys,
+                results = results
+            )
             true
         }
 
@@ -234,6 +252,63 @@ internal object OkHttpEndpointScanner {
         val callMatch = Regex("""(?:Call|Response|retrofit2\.Call|retrofit2\.Response)<(.+)>""").matchEntire(raw)
         if (callMatch != null) return callMatch.groupValues[1].trim()
         return raw
+    }
+
+    /**
+     * Extracts endpoint methods from wrapper classes that extend `OkHttpMethodBase`.
+     *
+     * Libraries like Nextcloud model HTTP verbs in subclasses whose `applyType(...)` method
+     * sets the request method (`temp.get()`, `temp.post(body)`, etc.) while URL is passed
+     * through constructor argument (`uri`), not inline `Request.Builder().url(...)` chains.
+     */
+    private fun scanOkHttpMethodBaseSubclasses(
+        text: String,
+        packageName: String,
+        constants: Map<String, String>,
+        baseUrlFallback: String?,
+        seenKeys: MutableSet<String>,
+        results: MutableList<Endpoint>
+    ) {
+        okHttpMethodBaseClassRegex.findAll(text).forEach { classMatch ->
+            val className = classMatch.groupValues[1].trim()
+            val constructorParamsRaw = classMatch.groupValues[2]
+            val superArgsRaw = classMatch.groupValues[3]
+            val classBody = classMatch.groupValues[4]
+
+            val applyTypeBody = applyTypeRegex.find(classBody)?.groupValues?.getOrNull(1)?.trim()
+                ?: return@forEach
+
+            val httpMethod = extractHttpMethod(applyTypeBody)
+            val requestType = inferRequestType(applyTypeBody)
+
+            val constructorParamTypes = constructorParamRegex.findAll(constructorParamsRaw)
+                .associate { match ->
+                    match.groupValues[1].trim() to match.groupValues[2].trim()
+                }
+
+            val uriExpression = superArgsRaw.substringBefore(',').trim()
+            val resolvedUrl = resolveUrlExpression(
+                expression = uriExpression,
+                constants = constants,
+                baseUrlFallback = baseUrlFallback
+            )
+
+            val endpoint = Endpoint(
+                httpMethod = httpMethod,
+                path = resolvedUrl.path,
+                serviceFqn = if (packageName.isBlank()) className else "$packageName.$className",
+                functionName = "applyType",
+                requestType = requestType
+                    ?: constructorParamTypes.values.firstOrNull { it.contains("RequestBody") }?.substringAfterLast('.'),
+                responseType = null,
+                baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
+            )
+
+            val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
+            if (seenKeys.add(key)) {
+                results += endpoint
+            }
+        }
     }
 
     /**

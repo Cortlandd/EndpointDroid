@@ -143,7 +143,7 @@ internal object EndpointDocDetailsResolver {
         } else {
             inferOkHttpRequestType(method) ?: endpoint.requestType
         }
-        val responseType = extractResponseType(method) ?: endpoint.responseType
+        val responseType = resolveResponseType(endpoint, method, isRetrofitMethod)
         val requestSamples = EndpointJsonSampleResolver.build(project, requestType)
         val responseSamples = EndpointJsonSampleResolver.build(project, responseType)
 
@@ -556,6 +556,26 @@ internal object EndpointDocDetailsResolver {
         if (text.contains("RequestBody.create") || text.contains("toRequestBody(")) return "RequestBody"
         if (okHttpBodyMethodRegex.containsMatchIn(text)) return "RequestBody"
         return null
+    }
+
+    /**
+     * Chooses response type with provider-aware fallback behavior.
+     *
+     * Retrofit methods usually declare the payload in method signatures, while many OkHttp
+     * wrapper methods (e.g. `applyType`) return `Unit`/`Void`; those should not override a
+     * previously inferred endpoint response type.
+     */
+    private fun resolveResponseType(endpoint: Endpoint, method: PsiMethod, isRetrofitMethod: Boolean): String? {
+        if (isRetrofitMethod) {
+            return extractResponseType(method) ?: endpoint.responseType
+        }
+
+        endpoint.responseType?.let { return it }
+        val extracted = extractResponseType(method) ?: return null
+        if (extracted.equals("Unit", ignoreCase = true) || extracted.equals("Void", ignoreCase = true)) {
+            return null
+        }
+        return extracted
     }
 
     /**
