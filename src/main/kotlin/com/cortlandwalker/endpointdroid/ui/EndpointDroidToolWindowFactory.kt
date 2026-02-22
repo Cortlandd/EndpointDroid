@@ -5,6 +5,9 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 
+/**
+ * Registers and creates the EndpointDroid tool window content.
+ */
 class EndpointDroidToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = EndpointDroidPanel(project)
