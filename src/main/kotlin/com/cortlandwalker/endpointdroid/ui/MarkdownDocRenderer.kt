@@ -22,34 +22,37 @@ internal object MarkdownDocRenderer {
         val requestUrl = buildRequestUrl(url, details)
         val serviceLink = EndpointDocLinks.serviceUrl(ep.serviceFqn)
         val functionLink = EndpointDocLinks.functionUrl(ep.serviceFqn, ep.functionName)
+        val methodBadge = methodBadge(ep.httpMethod)
+        val authBadge = authBadge(details.authRequirement)
 
         return buildString {
-            appendLine("# Endpoint")
+            appendLine("# ${methodBadge} Endpoint")
             appendLine()
-            appendLine("- **Method:** ${ep.httpMethod.uppercase()}")
-            appendLine("- **Path:** `${ep.path}`")
-            appendLine("- **Service:** [`${ep.serviceFqn}`]($serviceLink)")
-            appendLine("- **Function:** [`${ep.functionName}`]($functionLink)")
-            appendLine("- **Source:** [Open function declaration]($functionLink)")
+            appendLine("- **🎯 Method:** ${methodBadge}")
+            appendLine("- **🛣️ Path:** `${ep.path}`")
+            appendLine("- **🏷️ Service:** [`${ep.serviceFqn}`]($serviceLink)")
+            appendLine("- **⚙️ Function:** [`${ep.functionName}`]($functionLink)")
+            appendLine("- **📍 Source:** [Open function declaration]($functionLink)")
             if (details.sourceFile != null && details.sourceLine != null) {
-                appendLine("- **Source File:** `${details.sourceFile}:${details.sourceLine}`")
+                appendLine("- **🗂️ Source File:** `${details.sourceFile}:${details.sourceLine}`")
             }
-            appendLine("- **Base URL:** `${ep.baseUrl ?: "{{host}}"}`")
-            appendLine("- **Resolved URL:** `$url`")
+            appendLine("- **🌐 Base URL:** `${ep.baseUrl ?: "{{host}}"}`")
+            appendLine("- **🔗 Resolved URL:** `$url`")
+            appendLine("- **🔐 Auth Hint:** $authBadge")
             appendLine()
-            appendLine("## Types")
-            appendLine("- **Request:** ${renderTypeLink(ep.requestType)}")
-            appendLine("- **Response:** ${renderTypeLink(ep.responseType)}")
+            appendLine("## 🧬 Types")
+            appendLine("- **📨 Request:** ${renderTypeLink(ep.requestType)}")
+            appendLine("- **📬 Response:** ${renderTypeLink(ep.responseType)}")
             appendLine()
-            appendLine("## Parameters")
-            appendLine("- **Path Params:** ${renderNames(details.pathParams)}")
-            appendLine("- **Query Params:** ${renderNames(details.queryParams)}${if (details.hasQueryMap) " + `@QueryMap`" else ""}")
-            appendLine("- **Header Params:** ${renderNames(details.headerParams)}${if (details.hasHeaderMap) " + `@HeaderMap`" else ""}")
-            appendLine("- **Form Fields:** ${renderNames(details.fieldParams)}${if (details.hasFieldMap) " + `@FieldMap`" else ""}")
-            appendLine("- **Multipart Parts:** ${renderNames(details.partParams)}${if (details.hasPartMap) " + `@PartMap`" else ""}")
-            appendLine("- **Dynamic URL (`@Url`):** ${if (details.hasDynamicUrl) "Yes" else "No"}")
+            appendLine("## 🧩 Parameters")
+            appendLine("- **🧭 Path Params:** ${renderNames(details.pathParams)}")
+            appendLine("- **🔎 Query Params:** ${renderNames(details.queryParams)}${if (details.hasQueryMap) " + `@QueryMap`" else ""}")
+            appendLine("- **🧾 Header Params:** ${renderNames(details.headerParams)}${if (details.hasHeaderMap) " + `@HeaderMap`" else ""}")
+            appendLine("- **📝 Form Fields:** ${renderNames(details.fieldParams)}${if (details.hasFieldMap) " + `@FieldMap`" else ""}")
+            appendLine("- **📦 Multipart Parts:** ${renderNames(details.partParams)}${if (details.hasPartMap) " + `@PartMap`" else ""}")
+            appendLine("- **🛰️ Dynamic URL (`@Url`):** ${if (details.hasDynamicUrl) "✅ Yes" else "❌ No"}")
             appendLine()
-            appendLine("## HTTP Client Draft")
+            appendLine("## 🧪 HTTP Client Draft")
             appendLine("```http")
             appendLine("${ep.httpMethod.uppercase()} $requestUrl")
             appendLine("Accept: application/json")
@@ -89,15 +92,15 @@ internal object MarkdownDocRenderer {
             }
             appendLine("```")
             appendLine()
-            appendLine("## Notes")
+            appendLine("## 📌 Notes")
             appendLine("- Authorization header appears only when required or likely optional from Retrofit annotations.")
             if (details.hasQueryMap || details.hasHeaderMap || details.hasFieldMap || details.hasPartMap) {
-                appendLine("- This endpoint includes one or more map-based params; expand placeholders as needed.")
+                appendLine("- 🧠 This endpoint includes one or more map-based params; expand placeholders as needed.")
             }
             if (details.hasDynamicUrl) {
-                appendLine("- `@Url` overrides the path/base URL at runtime; provide `{{full_url}}`.")
+                appendLine("- 🚦 `@Url` overrides the path/base URL at runtime; provide `{{full_url}}`.")
             }
-            appendLine("- If Base URL is `{{host}}`, add `endpointdroid.yaml` in your project root.")
+            appendLine("- 🌍 If Base URL is `{{host}}`, add `endpointdroid.yaml` in your project root.")
         }
     }
 
@@ -144,5 +147,32 @@ internal object MarkdownDocRenderer {
             .trim('_')
             .lowercase()
             .ifBlank { "value" }
+    }
+
+    /**
+     * Returns a colorful emoji badge per HTTP method.
+     */
+    private fun methodBadge(method: String): String {
+        return when (method.uppercase()) {
+            "GET" -> "🟢 GET"
+            "POST" -> "🔵 POST"
+            "PUT" -> "🟡 PUT"
+            "PATCH" -> "🟣 PATCH"
+            "DELETE" -> "🔴 DELETE"
+            "HEAD" -> "⚪ HEAD"
+            "OPTIONS" -> "🟠 OPTIONS"
+            else -> "⚫ ${method.uppercase()}"
+        }
+    }
+
+    /**
+     * Returns a visual authorization status badge.
+     */
+    private fun authBadge(requirement: EndpointDocDetails.AuthRequirement): String {
+        return when (requirement) {
+            EndpointDocDetails.AuthRequirement.REQUIRED -> "🔒 Required"
+            EndpointDocDetails.AuthRequirement.OPTIONAL -> "🟨 Optional"
+            EndpointDocDetails.AuthRequirement.NONE -> "🟢 None"
+        }
     }
 }
