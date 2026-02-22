@@ -43,7 +43,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     private val endpointList = JBList<Endpoint>().apply {
         cellRenderer = EndpointListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        emptyText.text = INITIAL_MESSAGE
+        emptyText.text = EMPTY_LIST_MESSAGE
     }
     private val detailsPane = JEditorPane("text/html", "").apply {
         isEditable = false
@@ -64,13 +64,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         val actions = DefaultActionGroup().apply {
             add(object : DumbAwareAction("Refresh", "Re-scan endpoints", AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    // Always give immediate feedback, then wait for smart mode before scanning indices.
-                    showDetailsMessage(INDEXING_MESSAGE)
-                    DumbService.getInstance(project).runWhenSmart {
-                        ApplicationManager.getApplication().invokeLater {
-                            refreshFromService(selectFirst = false)
-                        }
-                    }
+                    scheduleRefresh(selectFirst = false)
                 }
             })
         }
@@ -117,7 +111,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
             handleDetailsHyperlink(link)
         }
 
-        showDetailsMessage(INITIAL_MESSAGE)
+        scheduleRefresh(selectFirst = true)
     }
 
     /**
@@ -168,6 +162,27 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Schedules a refresh using built-in smart-mode coordination.
+     *
+     * - If indexing is active, show an indexing state and refresh when smart mode resumes.
+     * - If already smart, queue refresh immediately while still showing in-window status.
+     */
+    private fun scheduleRefresh(selectFirst: Boolean) {
+        val dumbService = DumbService.getInstance(project)
+        if (dumbService.isDumb) {
+            showDetailsMessage(INDEXING_MESSAGE)
+        } else {
+            showDetailsMessage(REFRESHING_MESSAGE)
+        }
+
+        dumbService.smartInvokeLater {
+            if (project.isDisposed) return@smartInvokeLater
+            showDetailsMessage(REFRESHING_MESSAGE)
+            refreshFromService(selectFirst)
         }
     }
 
@@ -307,8 +322,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
 
     private companion object {
         const val DEFAULT_SPLIT_WEIGHT = 0.45
-        const val INITIAL_MESSAGE = "Press Refresh to scan endpoints."
+        const val EMPTY_LIST_MESSAGE = "Endpoints will appear here after refresh."
         const val INDEXING_MESSAGE = "Indexing..."
+        const val REFRESHING_MESSAGE = "Refreshing endpoints..."
         const val LOADING_DETAILS_MESSAGE = "Loading endpoint details..."
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
