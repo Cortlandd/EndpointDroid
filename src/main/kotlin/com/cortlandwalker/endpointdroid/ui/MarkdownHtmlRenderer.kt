@@ -78,7 +78,8 @@ internal object MarkdownHtmlRenderer {
                 if (attrs.contains("border=", ignoreCase = true)) {
                     match.value
                 } else {
-                    "<table$attrs border=\"1\" bordercolor=\"#7f848e\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
+                    // Swing's HTML renderer is more reliable with cellspacing-based grids than CSS borders.
+                    "<table$attrs border=\"1\" cellspacing=\"1\" cellpadding=\"4\" bgcolor=\"#6f7683\" width=\"100%\">"
                 }
             }
     }
@@ -99,7 +100,7 @@ internal object MarkdownHtmlRenderer {
                 if (attrs.contains("border=", ignoreCase = true)) {
                     match.value
                 } else {
-                    "<th$attrs border=\"1\" bordercolor=\"#7f848e\" align=\"left\" bgcolor=\"#2f333d\">"
+                    "<th$attrs border=\"1\" align=\"left\" bgcolor=\"#2f333d\" valign=\"top\">"
                 }
             }
 
@@ -109,7 +110,7 @@ internal object MarkdownHtmlRenderer {
                 if (attrs.contains("border=", ignoreCase = true)) {
                     match.value
                 } else {
-                    "<td$attrs border=\"1\" bordercolor=\"#7f848e\" align=\"left\">"
+                    "<td$attrs border=\"1\" align=\"left\" bgcolor=\"#252932\" valign=\"top\">"
                 }
             }
     }
