@@ -3,9 +3,11 @@ package com.cortlandwalker.endpointdroid.services
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.psi.util.PsiModificationTracker
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Resolves a best-effort Retrofit base URL for a project.
@@ -30,13 +32,34 @@ internal object BaseUrlResolver {
     private val javaStringConstantRegex =
         Regex("String\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*\"([^\"]+)\"")
     private val identifierRegex = Regex("""[A-Za-z_][A-Za-z0-9_.]*""")
+    private val cacheByKey = ConcurrentHashMap<ResolutionCacheKey, ResolutionCacheValue>()
+    private val latestKeyByProject = ConcurrentHashMap<String, ResolutionCacheKey>()
 
     /**
      * Resolves the base URL for the given project, or `null` when none is discovered.
      */
     fun resolve(project: Project): String? {
-        readBaseUrlFromConfig(project)?.let { return it }
-        return inferBaseUrlFromSource(project)
+        val projectKey = project.basePath ?: project.locationHash
+        val cacheKey = ResolutionCacheKey(
+            projectKey = projectKey,
+            psiModificationCount = PsiModificationTracker.getInstance(project).modificationCount,
+            configLastModifiedMillis = configLastModifiedMillis(project)
+        )
+        val latestKey = latestKeyByProject[projectKey]
+        if (latestKey == cacheKey) {
+            cacheByKey[cacheKey]?.let { return it.baseUrl }
+        }
+
+        val resolved = readBaseUrlFromConfig(project) ?: inferBaseUrlFromSource(project)
+
+        cacheByKey[cacheKey] = ResolutionCacheValue(resolved)
+        latestKeyByProject.put(projectKey, cacheKey)?.let { previousKey ->
+            if (previousKey != cacheKey) {
+                cacheByKey.remove(previousKey)
+            }
+        }
+
+        return resolved
     }
 
     /**
@@ -66,6 +89,16 @@ internal object BaseUrlResolver {
         }
 
         return null
+    }
+
+    /**
+     * Reads config file modification stamp for cache invalidation.
+     */
+    private fun configLastModifiedMillis(project: Project): Long {
+        val basePath = project.basePath ?: return -1L
+        val configPath = Path.of(basePath, CONFIG_FILE_NAME)
+        if (!Files.isRegularFile(configPath)) return -1L
+        return runCatching { Files.getLastModifiedTime(configPath).toMillis() }.getOrElse { -1L }
     }
 
     /**
@@ -145,4 +178,12 @@ internal object BaseUrlResolver {
     private fun isSupportedSourceFile(fileName: String): Boolean {
         return fileName.endsWith(".kt") || fileName.endsWith(".java")
     }
+
+    private data class ResolutionCacheKey(
+        val projectKey: String,
+        val psiModificationCount: Long,
+        val configLastModifiedMillis: Long
+    )
+
+    private data class ResolutionCacheValue(val baseUrl: String?)
 }
