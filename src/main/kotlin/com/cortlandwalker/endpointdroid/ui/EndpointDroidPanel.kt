@@ -4,6 +4,7 @@ import com.cortlandwalker.endpointdroid.model.Endpoint
 import com.cortlandwalker.endpointdroid.services.EndpointConfigResolver
 import com.cortlandwalker.endpointdroid.services.EndpointService
 import com.intellij.icons.AllIcons
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.JTabbedPane
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.event.HyperlinkEvent
@@ -57,15 +59,16 @@ import org.intellij.plugins.markdown.lang.MarkdownFileType
  */
 class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val rootNode = DefaultMutableTreeNode("root")
-    private val endpointTreeModel = DefaultTreeModel(rootNode)
-    private val endpointTree = Tree(endpointTreeModel).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
-        cellRenderer = EndpointTreeCellRenderer { endpoint ->
-            endpointMetadata[EndpointKey.from(endpoint)]
-        }
+    private val properties = PropertiesComponent.getInstance(project)
+    private val endpointMetadata = ConcurrentHashMap<EndpointKey, EndpointListMetadata>()
+    private val scannedTreeContext = createTreeContext()
+    private val postmanTreeContext = createTreeContext()
+    private val insomniaTreeContext = createTreeContext()
+    private val sourceTabs = JTabbedPane().apply {
+        tabPlacement = JTabbedPane.TOP
+        addTab(SourceTab.SCANNED.label, JBScrollPane(scannedTreeContext.tree))
+        addTab(SourceTab.POSTMAN.label, JBScrollPane(postmanTreeContext.tree))
+        addTab(SourceTab.INSOMNIA.label, JBScrollPane(insomniaTreeContext.tree))
     }
 
     private val searchField = SearchTextField().apply {
@@ -97,10 +100,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private val detailsRenderRequestId = AtomicLong(0)
     private val metadataRequestId = AtomicLong(0)
 
-    private val endpointMetadata = ConcurrentHashMap<EndpointKey, EndpointListMetadata>()
     private val recentSelections = linkedMapOf<EndpointKey, Long>()
     private var recentSequence = 0L
-    private var allEndpoints: List<Endpoint> = emptyList()
+    private var scannedEndpoints: List<Endpoint> = emptyList()
+    private var postmanEndpoints: List<Endpoint> = emptyList()
+    private var insomniaEndpoints: List<Endpoint> = emptyList()
 
     init {
         // Tool window toolbar actions.
@@ -137,39 +141,16 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
         add(splitPane, BorderLayout.CENTER)
 
-        endpointTree.addTreeSelectionListener {
-            val endpoint = selectedEndpoint() ?: run {
-                selectedServiceGroup()?.let { group ->
-                    showDetailsMessage("${shortServiceName(group.serviceFqn)} (${group.count})\n\nSelect an endpoint to view details.")
-                }
-                return@addTreeSelectionListener
-            }
-
-            recordRecentSelection(endpoint)
-            val requestId = detailsRenderRequestId.incrementAndGet()
-            showDetailsMessage(LOADING_DETAILS_MESSAGE)
-
-            ApplicationManager.getApplication().executeOnPooledThread {
-                val markdown = runCatching {
-                    val details = if (DumbService.isDumb(project)) {
-                        EndpointDocDetails.empty()
-                    } else {
-                        ApplicationManager.getApplication().runReadAction<EndpointDocDetails> {
-                            EndpointDocDetailsResolver.resolve(project, endpoint)
-                        }
-                    }
-                    MarkdownDocRenderer.render(endpoint, details)
-                }.getOrElse { error ->
-                    "$DETAILS_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}"
-                }
-
-                ApplicationManager.getApplication().invokeLater {
-                    if (detailsRenderRequestId.get() != requestId) return@invokeLater
-                    val selectedKey = selectedEndpointKey() ?: return@invokeLater
-                    if (selectedKey != EndpointKey.from(endpoint)) return@invokeLater
-                    renderMarkdownDetails(markdown)
-                }
-            }
+        attachTreeSelectionListener(scannedTreeContext.tree)
+        attachTreeSelectionListener(postmanTreeContext.tree)
+        attachTreeSelectionListener(insomniaTreeContext.tree)
+        val restoredSource = SourceTab.fromStorageValue(properties.getValue(SELECTED_SOURCE_TAB_KEY)) ?: SourceTab.SCANNED
+        sourceTabs.selectedIndex = restoredSource.ordinal
+        sourceTabs.addChangeListener {
+            val source = selectedSourceTab()
+            properties.setValue(SELECTED_SOURCE_TAB_KEY, source.storageValue)
+            updateMethodFilterAvailability(endpointsFor(source))
+            applyFiltersAndGrouping(selectFirst = false, preferredSelection = null)
         }
 
         detailsPaneFallback.addHyperlinkListener { event ->
@@ -193,16 +174,16 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
             ApplicationManager.getApplication().invokeLater {
                 if (refreshRequestId.get() != requestId) return@invokeLater
 
-                allEndpoints = endpoints
+                scannedEndpoints = endpoints
                 endpointMetadata.clear()
-                updateMethodFilterAvailability(endpoints)
+                updateMethodFilterAvailability(endpointsFor(selectedSourceTab()))
                 applyFiltersAndGrouping(selectFirst = selectFirst, preferredSelection = previousSelection)
                 prefetchEndpointMetadata(endpoints, requestId)
 
                 val refreshStatus = endpointService.getLastRefreshStatus()
                 val hasSelectedEndpoint = selectedEndpoint() != null
-                if (endpoints.isEmpty()) {
-                    showDetailsMessage("$NO_ENDPOINTS_MESSAGE\n\n$refreshStatus")
+                if (endpointsFor(selectedSourceTab()).isEmpty()) {
+                    showDetailsMessage("${emptyStateMessageFor(selectedSourceTab())}\n\n$refreshStatus")
                 } else if (!hasSelectedEndpoint) {
                     showDetailsMessage("$SELECT_ENDPOINT_MESSAGE\n\n$refreshStatus")
                 }
@@ -211,10 +192,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshPromise.onError { error ->
             ApplicationManager.getApplication().invokeLater {
                 if (refreshRequestId.get() != requestId) return@invokeLater
-                allEndpoints = emptyList()
+                scannedEndpoints = emptyList()
                 endpointMetadata.clear()
-                rootNode.removeAllChildren()
-                endpointTreeModel.reload()
+                treeContextFor(SourceTab.SCANNED).rootNode.removeAllChildren()
+                treeContextFor(SourceTab.SCANNED).treeModel.reload()
                 val refreshStatus = endpointService.getLastRefreshStatus()
                 showDetailsMessage(
                     "$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}\n\n$refreshStatus"
@@ -337,10 +318,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      * Rebuilds the grouped tree from active filters and sort options.
      */
     private fun applyFiltersAndGrouping(selectFirst: Boolean, preferredSelection: EndpointKey? = selectedEndpointKey()) {
+        val sourceTab = selectedSourceTab()
+        val context = treeContextFor(sourceTab)
         val expandedServices = expandedServiceFqns()
-        val filteredEndpoints = filterEndpoints(allEndpoints)
+        val sourceEndpoints = endpointsFor(sourceTab)
+        val filteredEndpoints = filterEndpoints(sourceEndpoints)
 
-        rootNode.removeAllChildren()
+        context.rootNode.removeAllChildren()
         val grouped = filteredEndpoints
             .groupBy { it.serviceFqn }
             .toSortedMap(compareBy({ shortServiceName(it) }, { it }))
@@ -350,10 +334,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
             sortEndpoints(endpointsForService).forEach { endpoint ->
                 serviceNode.add(DefaultMutableTreeNode(endpoint))
             }
-            rootNode.add(serviceNode)
+            context.rootNode.add(serviceNode)
         }
 
-        endpointTreeModel.reload()
+        context.treeModel.reload()
         restoreExpansion(expandedServices)
 
         val selected = when {
@@ -363,8 +347,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
         if (!selected && filteredEndpoints.isEmpty()) {
-            if (allEndpoints.isEmpty()) {
-                showDetailsMessage(NO_ENDPOINTS_MESSAGE)
+            if (sourceEndpoints.isEmpty()) {
+                showDetailsMessage(emptyStateMessageFor(sourceTab))
             } else {
                 showDetailsMessage(NO_MATCHING_ENDPOINTS_MESSAGE)
             }
@@ -449,7 +433,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
         return JPanel(BorderLayout()).apply {
             add(controls, BorderLayout.NORTH)
-            add(JBScrollPane(endpointTree), BorderLayout.CENTER)
+            add(sourceTabs, BorderLayout.CENTER)
         }
     }
 
@@ -667,6 +651,108 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    /**
+     * Creates a tree + model context shared by source tabs.
+     */
+    private fun createTreeContext(): EndpointTreeContext {
+        val root = DefaultMutableTreeNode("root")
+        val model = DefaultTreeModel(root)
+        val tree = Tree(model).apply {
+            isRootVisible = false
+            showsRootHandles = true
+            selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+            cellRenderer = EndpointTreeCellRenderer { endpoint ->
+                endpointMetadata[EndpointKey.from(endpoint)]
+            }
+        }
+        return EndpointTreeContext(rootNode = root, treeModel = model, tree = tree)
+    }
+
+    /**
+     * Resolves selected source tab from persisted project state.
+     */
+    private fun selectedSourceTab(): SourceTab {
+        val selectedIndex = sourceTabs.selectedIndex
+        if (selectedIndex in SourceTab.entries.indices) {
+            return SourceTab.entries[selectedIndex]
+        }
+        val stored = properties.getValue(SELECTED_SOURCE_TAB_KEY)
+        return SourceTab.fromStorageValue(stored) ?: SourceTab.SCANNED
+    }
+
+    /**
+     * Maps source tabs to their backing tree context.
+     */
+    private fun treeContextFor(source: SourceTab): EndpointTreeContext {
+        return when (source) {
+            SourceTab.SCANNED -> scannedTreeContext
+            SourceTab.POSTMAN -> postmanTreeContext
+            SourceTab.INSOMNIA -> insomniaTreeContext
+        }
+    }
+
+    /**
+     * Returns the endpoint collection for a given source tab.
+     */
+    private fun endpointsFor(source: SourceTab): List<Endpoint> {
+        return when (source) {
+            SourceTab.SCANNED -> scannedEndpoints
+            SourceTab.POSTMAN -> postmanEndpoints
+            SourceTab.INSOMNIA -> insomniaEndpoints
+        }
+    }
+
+    /**
+     * Human-friendly empty state per source tab.
+     */
+    private fun emptyStateMessageFor(source: SourceTab): String {
+        return when (source) {
+            SourceTab.SCANNED -> NO_ENDPOINTS_MESSAGE
+            SourceTab.POSTMAN -> NO_POSTMAN_ENDPOINTS_MESSAGE
+            SourceTab.INSOMNIA -> NO_INSOMNIA_ENDPOINTS_MESSAGE
+        }
+    }
+
+    /**
+     * Adds shared endpoint selection behavior to each source tree.
+     */
+    private fun attachTreeSelectionListener(tree: Tree) {
+        tree.addTreeSelectionListener {
+            val endpoint = selectedEndpoint() ?: run {
+                selectedServiceGroup()?.let { group ->
+                    showDetailsMessage("${shortServiceName(group.serviceFqn)} (${group.count})\n\nSelect an endpoint to view details.")
+                }
+                return@addTreeSelectionListener
+            }
+
+            recordRecentSelection(endpoint)
+            val requestId = detailsRenderRequestId.incrementAndGet()
+            showDetailsMessage(LOADING_DETAILS_MESSAGE)
+
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val markdown = runCatching {
+                    val details = if (DumbService.isDumb(project)) {
+                        EndpointDocDetails.empty()
+                    } else {
+                        ApplicationManager.getApplication().runReadAction<EndpointDocDetails> {
+                            EndpointDocDetailsResolver.resolve(project, endpoint)
+                        }
+                    }
+                    MarkdownDocRenderer.render(endpoint, details)
+                }.getOrElse { error ->
+                    "$DETAILS_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}"
+                }
+
+                ApplicationManager.getApplication().invokeLater {
+                    if (detailsRenderRequestId.get() != requestId) return@invokeLater
+                    val selectedKey = selectedEndpointKey() ?: return@invokeLater
+                    if (selectedKey != EndpointKey.from(endpoint)) return@invokeLater
+                    renderMarkdownDetails(markdown)
+                }
+            }
+        }
+    }
+
     private fun selectedMethods(): Set<String> {
         return methodFilterBoxes
             .asSequence()
@@ -676,12 +762,12 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun selectedEndpoint(): Endpoint? {
-        val node = endpointTree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
+        val node = activeTreeContext().tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
         return node.userObject as? Endpoint
     }
 
     private fun selectedServiceGroup(): EndpointServiceGroup? {
-        val node = endpointTree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
+        val node = activeTreeContext().tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
         return node.userObject as? EndpointServiceGroup
     }
 
@@ -690,24 +776,26 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun selectFirstEndpoint(): Boolean {
-        for (groupIndex in 0 until rootNode.childCount) {
-            val groupNode = rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
+        val context = activeTreeContext()
+        for (groupIndex in 0 until context.rootNode.childCount) {
+            val groupNode = context.rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
             if (groupNode.childCount == 0) continue
             val endpointNode = groupNode.getChildAt(0) as? DefaultMutableTreeNode ?: continue
-            endpointTree.selectionPath = javax.swing.tree.TreePath(endpointNode.path)
+            context.tree.selectionPath = javax.swing.tree.TreePath(endpointNode.path)
             return true
         }
         return false
     }
 
     private fun selectEndpointByKey(key: EndpointKey): Boolean {
-        for (groupIndex in 0 until rootNode.childCount) {
-            val groupNode = rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
+        val context = activeTreeContext()
+        for (groupIndex in 0 until context.rootNode.childCount) {
+            val groupNode = context.rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
             for (endpointIndex in 0 until groupNode.childCount) {
                 val endpointNode = groupNode.getChildAt(endpointIndex) as? DefaultMutableTreeNode ?: continue
                 val endpoint = endpointNode.userObject as? Endpoint ?: continue
                 if (EndpointKey.from(endpoint) == key) {
-                    endpointTree.selectionPath = javax.swing.tree.TreePath(endpointNode.path)
+                    context.tree.selectionPath = javax.swing.tree.TreePath(endpointNode.path)
                     return true
                 }
             }
@@ -716,12 +804,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun expandedServiceFqns(): Set<String> {
+        val context = activeTreeContext()
         val expanded = linkedSetOf<String>()
-        for (groupIndex in 0 until rootNode.childCount) {
-            val groupNode = rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
+        for (groupIndex in 0 until context.rootNode.childCount) {
+            val groupNode = context.rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
             val group = groupNode.userObject as? EndpointServiceGroup ?: continue
             val path = javax.swing.tree.TreePath(groupNode.path)
-            if (endpointTree.isExpanded(path)) {
+            if (context.tree.isExpanded(path)) {
                 expanded += group.serviceFqn
             }
         }
@@ -729,14 +818,22 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun restoreExpansion(expandedServiceFqns: Set<String>) {
-        for (groupIndex in 0 until rootNode.childCount) {
-            val groupNode = rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
+        val context = activeTreeContext()
+        for (groupIndex in 0 until context.rootNode.childCount) {
+            val groupNode = context.rootNode.getChildAt(groupIndex) as? DefaultMutableTreeNode ?: continue
             val group = groupNode.userObject as? EndpointServiceGroup ?: continue
             val path = javax.swing.tree.TreePath(groupNode.path)
             if (expandedServiceFqns.isEmpty() || expandedServiceFqns.contains(group.serviceFqn)) {
-                endpointTree.expandPath(path)
+                context.tree.expandPath(path)
             }
         }
+    }
+
+    /**
+     * Returns the currently visible tree context based on source tab selection.
+     */
+    private fun activeTreeContext(): EndpointTreeContext {
+        return treeContextFor(selectedSourceTab())
     }
 
     private fun recordRecentSelection(endpoint: Endpoint) {
@@ -759,6 +856,30 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     override fun dispose() {
         // No-op; panel owns no explicit disposable resources in fallback renderer mode.
     }
+
+    /**
+     * Endpoint source tabs shown under filter controls.
+     */
+    private enum class SourceTab(val label: String, val storageValue: String) {
+        SCANNED("EndpointDroid", "scanned"),
+        POSTMAN("Postman", "postman"),
+        INSOMNIA("Insomnia", "insomnia");
+
+        companion object {
+            fun fromStorageValue(value: String?): SourceTab? {
+                return entries.firstOrNull { it.storageValue.equals(value, ignoreCase = true) }
+            }
+        }
+    }
+
+    /**
+     * Holds tree model state per source tab.
+     */
+    private data class EndpointTreeContext(
+        val rootNode: DefaultMutableTreeNode,
+        val treeModel: DefaultTreeModel,
+        val tree: Tree
+    )
 
     private enum class AuthFilter(private val label: String) {
         ANY("Auth: Any"),
@@ -795,8 +916,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val REFRESHING_MESSAGE = "Refreshing endpoints..."
         const val LOADING_DETAILS_MESSAGE = "Loading endpoint details..."
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
+        const val NO_POSTMAN_ENDPOINTS_MESSAGE = "No Postman endpoints imported yet."
+        const val NO_INSOMNIA_ENDPOINTS_MESSAGE = "No Insomnia endpoints imported yet."
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
+        const val SELECTED_SOURCE_TAB_KEY = "endpointdroid.selected.source.tab"
         const val IMPORT_COLLECTION_PLACEHOLDER_MESSAGE =
             "Import collection support is coming soon.\n\nPlanned: Postman + Insomnia import."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"

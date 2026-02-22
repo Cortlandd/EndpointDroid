@@ -15,6 +15,7 @@ The `EndpointDroid` Tool Window is split into two panes:
 
 - Left pane: discovered endpoint list.
 - Right pane: endpoint details/docs view.
+- Left pane source tabs: `EndpointDroid`, `Postman`, `Insomnia` (selection is persisted per project).
 
 Current flow:
 
