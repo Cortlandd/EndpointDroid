@@ -30,8 +30,10 @@ internal object MarkdownHtmlRenderer {
         @Suppress("UNUSED_VARIABLE")
         val ignore = project to virtualFile
 
-        val swingSafeBody = compactBlockSpacing(
-            boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
+        val swingSafeBody = styleSectionTitles(
+            compactBlockSpacing(
+                boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
+            )
         )
         return "<html><body>$swingSafeBody</body></html>"
     }
@@ -122,24 +124,50 @@ internal object MarkdownHtmlRenderer {
     }
 
     /**
+     * Adds a bit more space before section headings while keeping heading-to-content compact.
+     *
+     * Section titles are emitted as markdown paragraphs with only bold content, so we
+     * identify that exact shape and tune margins for readability.
+     */
+    private fun styleSectionTitles(html: String): String {
+        val sectionTitleRegex = Regex(
+            "(?is)<p([^>]*)>\\s*<strong>\\s*([^<]+?)\\s*</strong>\\s*</p>"
+        )
+        return sectionTitleRegex.replace(html) { match ->
+            val attrs = match.groupValues[1]
+            val title = match.groupValues[2].trim()
+            val styledAttrs = mergeStyleIntoAttributes(
+                attrs,
+                "margin-top:10px; margin-bottom:2px;"
+            )
+            "<p$styledAttrs><strong>$title</strong></p>"
+        }
+    }
+
+    /**
      * Appends style rules to a tag while preserving existing attributes produced by markdown conversion.
      */
     private fun addOrMergeStyle(html: String, tagName: String, styleRules: String): String {
         val tagRegex = Regex("<$tagName(\\s[^>]*)?>", RegexOption.IGNORE_CASE)
         return tagRegex.replace(html) { match ->
             val attrs = match.groupValues.getOrElse(1) { "" }
-            val hasStyle = attrs.contains("style=", ignoreCase = true)
-            if (!hasStyle) {
-                "<$tagName$attrs style=\"$styleRules\">"
-            } else {
-                val styleRegex = Regex("style\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
-                val mergedAttrs = styleRegex.replace(attrs) { styleMatch ->
-                    val existing = styleMatch.groupValues[1].trim()
-                    val joined = if (existing.isEmpty()) styleRules else "$existing; $styleRules"
-                    "style=\"$joined\""
-                }
-                "<$tagName$mergedAttrs>"
-            }
+            "<$tagName${mergeStyleIntoAttributes(attrs, styleRules)}>"
+        }
+    }
+
+    /**
+     * Merges inline style attributes without dropping other existing tag attributes.
+     */
+    private fun mergeStyleIntoAttributes(attrs: String, styleRules: String): String {
+        val hasStyle = attrs.contains("style=", ignoreCase = true)
+        if (!hasStyle) {
+            return "$attrs style=\"$styleRules\""
+        }
+        val styleRegex = Regex("style\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
+        return styleRegex.replace(attrs) { styleMatch ->
+            val existing = styleMatch.groupValues[1].trim()
+            val joined = if (existing.isEmpty()) styleRules else "$existing; $styleRules"
+            "style=\"$joined\""
         }
     }
 }
