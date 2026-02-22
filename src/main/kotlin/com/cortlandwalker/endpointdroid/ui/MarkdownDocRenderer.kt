@@ -67,6 +67,20 @@ internal object MarkdownDocRenderer {
                 appendLine("- Source: $sourceLabel")
             }
             appendLine()
+            appendLine(sectionTitle("Usage"))
+            if (details.usageLocations.isEmpty()) {
+                appendLine("- No usages found in project scope.")
+            } else {
+                details.usageLocations.forEach { usage ->
+                    val usageLabel = buildUsageLabel(usage)
+                    val usageLink = EndpointDocLinks.usageUrl(usage.filePath, usage.offset)
+                    appendLine("- [$usageLabel]($usageLink)")
+                }
+                if (details.usageLocationsTruncated) {
+                    appendLine("- _Showing first ${details.usageLocations.size} usages._")
+                }
+            }
+            appendLine()
 
             appendLine(sectionTitle("Types"))
             appendLine("- Request: ${renderType(ep.requestType)}")
@@ -278,6 +292,14 @@ internal object MarkdownDocRenderer {
      * Builds a bold section title that reliably starts a new markdown block.
      */
     private fun sectionTitle(title: String): String = "**$title**"
+
+    /**
+     * Formats a usage entry label for markdown link rendering.
+     */
+    private fun buildUsageLabel(usage: EndpointDocDetails.UsageLocation): String {
+        val context = usage.containerName?.takeIf { it.isNotBlank() }?.let { " - $it()" }.orEmpty()
+        return "${usage.displayPath}:${usage.line}$context"
+    }
 
     /**
      * Builds the compact one-line endpoint header with status badges.

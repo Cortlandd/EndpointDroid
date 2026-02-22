@@ -25,7 +25,9 @@ internal data class EndpointDocDetails(
     val requestExampleJson: String?,
     val responseSchemaJson: String?,
     val responseExampleJson: String?,
-    val authRequirement: AuthRequirement
+    val authRequirement: AuthRequirement,
+    val usageLocations: List<UsageLocation>,
+    val usageLocationsTruncated: Boolean
 ) {
     /**
      * Query parameter metadata used for richer table rendering in endpoint docs.
@@ -45,6 +47,17 @@ internal data class EndpointDocDetails(
         OPTIONAL,
         REQUIRED
     }
+
+    /**
+     * A method call-site usage location shown in the details pane.
+     */
+    data class UsageLocation(
+        val displayPath: String,
+        val line: Int,
+        val containerName: String?,
+        val filePath: String,
+        val offset: Int
+    )
 
     companion object {
         fun empty(): EndpointDocDetails = EndpointDocDetails(
@@ -69,7 +82,9 @@ internal data class EndpointDocDetails(
             requestExampleJson = null,
             responseSchemaJson = null,
             responseExampleJson = null,
-            authRequirement = AuthRequirement.NONE
+            authRequirement = AuthRequirement.NONE,
+            usageLocations = emptyList(),
+            usageLocationsTruncated = false
         )
     }
 }

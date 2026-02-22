@@ -6,10 +6,15 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiClass
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiImportStatementBase
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiParameter
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.MethodReferencesSearch
 import com.intellij.psi.util.PsiModificationTracker
+import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.util.Processor
 import kotlin.io.path.Path
 import kotlin.io.path.invariantSeparatorsPathString
 import java.nio.charset.StandardCharsets
@@ -29,6 +34,7 @@ internal object EndpointDocDetailsResolver {
     private const val CONFIG_BASE_URL_KEY = "baseUrl"
     private const val CONFIG_BASE_URL_SNAKE_KEY = "base_url"
     private const val MAX_CACHE_ENTRIES = 2048
+    private const val MAX_USAGE_LOCATIONS = 50
     private val okHttpUrlCallRegex = Regex("""\.url\s*\(\s*([^)]+?)\s*\)""")
     private val okHttpHeaderCallRegex = Regex("""\.(?:addHeader|header)\s*\(\s*"([^"]+)"\s*,\s*([^)]+)\)""")
     private val okHttpFormFieldRegex = Regex("""\.add(?:Encoded)?\s*\(\s*"([^"]+)"\s*,\s*([^)]+)\)""")
@@ -61,6 +67,7 @@ internal object EndpointDocDetailsResolver {
             )
         )
         val source = resolveSourceLocation(project, method)
+        val usageCollection = collectUsageLocations(project, method)
         val isRetrofitMethod = hasRetrofitHttpAnnotation(method)
         val providerLabel = when {
             isRetrofitMethod -> "Retrofit"
@@ -169,7 +176,9 @@ internal object EndpointDocDetailsResolver {
             requestExampleJson = requestSamples?.exampleJson,
             responseSchemaJson = responseSamples?.schemaJson,
             responseExampleJson = responseSamples?.exampleJson,
-            authRequirement = authRequirement
+            authRequirement = authRequirement,
+            usageLocations = usageCollection.locations,
+            usageLocationsTruncated = usageCollection.truncated
         )
 
         return cacheAndReturn(cacheKey, resolved)
@@ -323,17 +332,91 @@ internal object EndpointDocDetailsResolver {
         val vFile = navElement.containingFile?.virtualFile ?: return SourceLocation(null, null)
         val document = FileDocumentManager.getInstance().getDocument(vFile)
         val line = document?.getLineNumber(navElement.textOffset)?.plus(1)
+        return SourceLocation(toProjectRelativePath(project, vFile.path), line)
+    }
 
-        val basePath = project.basePath
-        val relativePath = if (basePath == null) {
-            vFile.path
-        } else {
-            val full = Path(vFile.path).invariantSeparatorsPathString
-            val base = Path(basePath).invariantSeparatorsPathString.trimEnd('/')
-            if (full.startsWith("$base/")) full.removePrefix("$base/") else vFile.path
+    /**
+     * Collects method reference locations for the details Usage section.
+     *
+     * Import statements are filtered out to keep the section focused on call sites.
+     */
+    private fun collectUsageLocations(project: Project, method: PsiMethod): UsageCollection {
+        val locations = linkedMapOf<String, EndpointDocDetails.UsageLocation>()
+        var truncated = false
+
+        MethodReferencesSearch.search(method, GlobalSearchScope.projectScope(project), true)
+            .forEach(Processor { reference ->
+                val element = reference.element ?: return@Processor true
+                val virtualFile = element.containingFile?.virtualFile ?: return@Processor true
+                if (isImportReference(element)) return@Processor true
+
+                val offset = element.textOffset.coerceAtLeast(0)
+                val line = FileDocumentManager.getInstance()
+                    .getDocument(virtualFile)
+                    ?.getLineNumber(offset)
+                    ?.plus(1)
+                    ?: 1
+                val displayPath = toProjectRelativePath(project, virtualFile.path)
+                val containerName = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)?.name
+                val dedupeKey = "${virtualFile.path}:$line:${containerName.orEmpty()}"
+                locations.putIfAbsent(
+                    dedupeKey,
+                    EndpointDocDetails.UsageLocation(
+                        displayPath = displayPath,
+                        line = line,
+                        containerName = containerName,
+                        filePath = virtualFile.path,
+                        offset = offset
+                    )
+                )
+
+                if (locations.size >= MAX_USAGE_LOCATIONS) {
+                    truncated = true
+                    return@Processor false
+                }
+                true
+            })
+
+        return UsageCollection(
+            locations = locations.values
+                .sortedWith(compareBy({ it.displayPath }, { it.line }, { it.offset })),
+            truncated = truncated
+        )
+    }
+
+    /**
+     * Filters out import references from usage results.
+     */
+    private fun isImportReference(element: PsiElement): Boolean {
+        if (PsiTreeUtil.getParentOfType(element, PsiImportStatementBase::class.java, false) != null) {
+            return true
+        }
+        val document = FileDocumentManager.getInstance()
+            .getDocument(element.containingFile?.virtualFile ?: return false)
+            ?: return false
+        val lineIndex = document.getLineNumber(element.textOffset)
+        val lineStart = document.getLineStartOffset(lineIndex)
+        val lineEnd = document.getLineEndOffset(lineIndex)
+        val lineText = document.charsSequence
+            .subSequence(lineStart, lineEnd)
+            .toString()
+            .trimStart()
+        // Kotlin/Java imports both start with "import", so this avoids a hard Kotlin PSI dependency.
+        if (lineText.startsWith("import ")) {
+            return true
         }
 
-        return SourceLocation(relativePath, line)
+        return false
+    }
+
+    /**
+     * Converts absolute VFS paths into project-relative labels where possible.
+     */
+    private fun toProjectRelativePath(project: Project, absolutePath: String): String {
+        val basePath = project.basePath ?: return absolutePath
+        val full = Path(absolutePath).invariantSeparatorsPathString
+        val base = Path(basePath).invariantSeparatorsPathString.trimEnd('/')
+        return if (full.startsWith("$base/")) full.removePrefix("$base/") else absolutePath
     }
 
     /**
@@ -617,6 +700,10 @@ internal object EndpointDocDetailsResolver {
         val hasDynamicUrl: Boolean,
         val hasBody: Boolean,
         val staticHeaders: List<String>
+    )
+    private data class UsageCollection(
+        val locations: List<EndpointDocDetails.UsageLocation>,
+        val truncated: Boolean
     )
     private data class DetailsCacheKey(
         val projectKey: String,

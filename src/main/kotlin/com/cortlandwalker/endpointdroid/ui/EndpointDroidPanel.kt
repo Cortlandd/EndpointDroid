@@ -506,6 +506,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
 
             is EndpointDocLinks.Target.Type ->
                 resolveTypeDescriptor(target.typeText)
+
+            is EndpointDocLinks.Target.Usage ->
+                resolveUsageDescriptor(target.filePath, target.offset)
         }
     }
 
@@ -542,6 +545,14 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun resolveTypeDescriptor(typeText: String): OpenFileDescriptor? {
         val resolvedClass = resolveTypeClass(typeText) ?: return null
         return descriptorForElement(resolvedClass)
+    }
+
+    /**
+     * Opens a usage location captured from a method reference search result.
+     */
+    private fun resolveUsageDescriptor(filePath: String, offset: Int): OpenFileDescriptor? {
+        val file = LocalFileSystem.getInstance().findFileByPath(filePath) ?: return null
+        return OpenFileDescriptor(project, file, offset.coerceAtLeast(0))
     }
 
     /**

@@ -15,9 +15,12 @@ internal object EndpointDocLinks {
     private const val KIND_FUNCTION = "function"
     private const val KIND_SERVICE = "service"
     private const val KIND_TYPE = "type"
+    private const val KIND_USAGE = "usage"
     private const val SERVICE_KEY = "service"
     private const val FUNCTION_KEY = "function"
     private const val TYPE_KEY = "type"
+    private const val FILE_KEY = "file"
+    private const val OFFSET_KEY = "offset"
 
     /**
      * Navigation targets represented by custom endpoint hyperlinks.
@@ -26,6 +29,7 @@ internal object EndpointDocLinks {
         data class Function(val serviceFqn: String, val functionName: String) : Target
         data class Service(val serviceFqn: String) : Target
         data class Type(val typeText: String) : Target
+        data class Usage(val filePath: String, val offset: Int) : Target
     }
 
     /**
@@ -60,6 +64,17 @@ internal object EndpointDocLinks {
     }
 
     /**
+     * Link that opens a specific usage location in source.
+     */
+    fun usageUrl(filePath: String, offset: Int): String {
+        return buildUrl(
+            KIND_KEY to KIND_USAGE,
+            FILE_KEY to filePath,
+            OFFSET_KEY to offset.toString()
+        )
+    }
+
+    /**
      * Parses a custom endpoint hyperlink into a navigation target.
      */
     fun parse(url: String): Target? {
@@ -82,6 +97,12 @@ internal object EndpointDocLinks {
             KIND_TYPE -> {
                 val typeText = params[TYPE_KEY] ?: return null
                 Target.Type(typeText)
+            }
+
+            KIND_USAGE -> {
+                val filePath = params[FILE_KEY] ?: return null
+                val offset = params[OFFSET_KEY]?.toIntOrNull() ?: return null
+                Target.Usage(filePath, offset)
             }
 
             else -> null
