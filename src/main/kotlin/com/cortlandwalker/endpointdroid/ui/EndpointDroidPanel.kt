@@ -71,7 +71,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private val methodFilterBoxes = linkedMapOf<String, JBCheckBox>()
 
     private val detailsVirtualFile = LightVirtualFile("EndpointDroidDetails.md", MarkdownFileType.INSTANCE, "")
-    private val detailsPaneFallback = JEditorPane("text/html", "").apply {
+    private val detailsPaneFallback = JEditorPane(detailsContentType(), "").apply {
         isEditable = false
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
         foreground = UIUtil.getLabelForeground()
@@ -435,8 +435,21 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      */
     private fun renderMarkdownDetails(markdown: String) {
         detailsVirtualFile.setContent(this, markdown, false)
-        detailsPaneFallback.text = MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
+        detailsPaneFallback.text = when (DETAILS_RENDER_MODE) {
+            DetailsRenderMode.HTML_RENDERED -> MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
+            DetailsRenderMode.MARKDOWN_RAW -> markdown
+        }
         detailsPaneFallback.caretPosition = 0
+    }
+
+    /**
+     * Returns the editor content type for the selected details render mode.
+     */
+    private fun detailsContentType(): String {
+        return when (DETAILS_RENDER_MODE) {
+            DetailsRenderMode.HTML_RENDERED -> "text/html"
+            DetailsRenderMode.MARKDOWN_RAW -> "text/plain"
+        }
     }
 
     /**
@@ -675,7 +688,19 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         override fun toString(): String = label
     }
 
+    /**
+     * Rendering strategy for the right-side details panel.
+     */
+    private enum class DetailsRenderMode {
+        HTML_RENDERED,
+        MARKDOWN_RAW
+    }
+
     private companion object {
+        // One-line test switch:
+        // - HTML_RENDERED: current markdown->HTML renderer
+        // - MARKDOWN_RAW: plain markdown text (no HTML conversion)
+        val DETAILS_RENDER_MODE = DetailsRenderMode.HTML_RENDERED
         const val DEFAULT_SPLIT_WEIGHT = 0.45
         const val INDEXING_MESSAGE = "Indexing..."
         const val REFRESHING_MESSAGE = "Refreshing endpoints..."
