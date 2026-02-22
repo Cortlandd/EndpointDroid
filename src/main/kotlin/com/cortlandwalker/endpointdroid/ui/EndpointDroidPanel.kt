@@ -13,7 +13,10 @@ import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import java.awt.Dimension
 import java.awt.BorderLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JSplitPane
@@ -39,8 +42,19 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     private val detailsPane = JEditorPane("text/html", "").apply {
         isEditable = false
     }
+    private val splitPane = JSplitPane(
+        JSplitPane.HORIZONTAL_SPLIT,
+        JBScrollPane(endpointList),
+        JBScrollPane(detailsPane)
+    ).apply {
+        resizeWeight = DEFAULT_SPLIT_WEIGHT
+        isOneTouchExpandable = true
+        leftComponent.minimumSize = Dimension(0, 0)
+        rightComponent.minimumSize = Dimension(0, 0)
+    }
 
     private val endpointService = EndpointService.getInstance(project)
+    private var isDetailsFocused = false
 
     init {
         // Tool window toolbar actions.
@@ -56,6 +70,11 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
                     }
                 }
             })
+            add(object : DumbAwareAction("Toggle Details Focus", "Expand/collapse details panel", null) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    toggleDetailsFocus()
+                }
+            })
         }
 
         val toolbar = ActionManager.getInstance()
@@ -64,14 +83,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         add(toolbar.component, BorderLayout.NORTH)
 
         // Two-pane split: endpoints list (left) and docs (right).
-        val split = JSplitPane(
-            JSplitPane.HORIZONTAL_SPLIT,
-            JBScrollPane(endpointList),
-            JBScrollPane(detailsPane)
-        ).apply {
-            resizeWeight = 0.45
-        }
-        add(split, BorderLayout.CENTER)
+        add(splitPane, BorderLayout.CENTER)
 
         // When user selects an endpoint, render docs in the right pane.
         endpointList.addListSelectionListener {
@@ -79,6 +91,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
             val ep = endpointList.selectedValue ?: return@addListSelectionListener
             renderMarkdownDetails(MarkdownDocRenderer.render(ep))
         }
+        detailsPane.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                if (!isDetailsFocused) {
+                    maximizeDetailsPane()
+                }
+            }
+        })
 
         showDetailsMessage(INITIAL_MESSAGE)
     }
@@ -143,6 +162,35 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     /**
+     * Toggles between the normal split layout and full-width details focus mode.
+     */
+    private fun toggleDetailsFocus() {
+        if (isDetailsFocused) {
+            restoreSplitPane()
+        } else {
+            maximizeDetailsPane()
+        }
+    }
+
+    /**
+     * Expands the documentation pane to full width for focused reading.
+     */
+    private fun maximizeDetailsPane() {
+        isDetailsFocused = true
+        splitPane.dividerSize = 0
+        splitPane.dividerLocation = 0
+    }
+
+    /**
+     * Restores the two-pane layout after details focus mode.
+     */
+    private fun restoreSplitPane() {
+        isDetailsFocused = false
+        splitPane.dividerSize = DEFAULT_DIVIDER_SIZE
+        splitPane.setDividerLocation(DEFAULT_SPLIT_WEIGHT)
+    }
+
+    /**
      * Shows non-endpoint information in the details pane and resets scroll position.
      */
     private fun showDetailsMessage(message: String) {
@@ -150,6 +198,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     private companion object {
+        const val DEFAULT_SPLIT_WEIGHT = 0.45
+        const val DEFAULT_DIVIDER_SIZE = 8
         const val INITIAL_MESSAGE = "Press Refresh to scan endpoints."
         const val INDEXING_MESSAGE = "Indexing..."
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
