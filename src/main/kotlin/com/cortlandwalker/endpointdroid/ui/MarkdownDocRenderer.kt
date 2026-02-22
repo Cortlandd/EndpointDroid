@@ -22,7 +22,8 @@ internal object MarkdownDocRenderer {
         val method = ep.httpMethod.uppercase()
         val pathForDisplay = normalizeDisplayPath(ep.path)
         val pathParams = collectPathParams(ep.path, details.pathParams)
-        val queryParams = details.queryParams.distinct()
+        val queryDetails = resolveQueryDetails(details)
+        val queryParams = queryDetails.map { it.name }
         val headerRows = buildHeaderRows(details)
 
         val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
@@ -78,9 +79,13 @@ internal object MarkdownDocRenderer {
                     appendLine(
                         renderMarkdownTable(
                             headers = listOf("name", "type", "required", "default"),
-                            rows = queryParams.map { name ->
-                                // Query metadata shape is not fully modeled yet, so unknown columns stay explicit.
-                                listOf(name, "?", "?", "?")
+                            rows = queryDetails.map { query ->
+                                listOf(
+                                    query.name,
+                                    query.type.ifBlank { "?" },
+                                    if (query.required) "yes" else "no",
+                                    query.defaultValue ?: "-"
+                                )
                             }
                         )
                     )
@@ -193,6 +198,23 @@ internal object MarkdownDocRenderer {
             } else {
                 appendLine("- `.http` requests use `{{host}}`; define it in http-client.env.json.")
             }
+        }
+    }
+
+    /**
+     * Resolves query rows with metadata when available and falls back to name-only rows.
+     */
+    private fun resolveQueryDetails(details: EndpointDocDetails): List<EndpointDocDetails.QueryParamDetails> {
+        if (details.queryParamDetails.isNotEmpty()) {
+            return details.queryParamDetails.distinctBy { it.name }
+        }
+        return details.queryParams.distinct().map { name ->
+            EndpointDocDetails.QueryParamDetails(
+                name = name,
+                type = "?",
+                required = true,
+                defaultValue = null
+            )
         }
     }
 

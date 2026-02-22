@@ -7,6 +7,7 @@ import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiParameter
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiModificationTracker
 import kotlin.io.path.Path
@@ -52,6 +53,7 @@ internal object EndpointDocDetailsResolver {
 
         val pathParams = mutableListOf<String>()
         val queryParams = mutableListOf<String>()
+        val queryParamDetails = mutableListOf<EndpointDocDetails.QueryParamDetails>()
         var hasQueryMap = false
         val headerParams = mutableListOf<String>()
         var hasHeaderMap = false
@@ -61,6 +63,7 @@ internal object EndpointDocDetailsResolver {
         var hasPartMap = false
         var hasDynamicUrl = false
         var hasBody = false
+        val parameterDefaults = extractKotlinDefaultValues(method)
 
         method.parameterList.parameters.forEach { param ->
             param.annotations.forEach { ann ->
@@ -68,7 +71,17 @@ internal object EndpointDocDetailsResolver {
                     "retrofit2.http.Path",
                     "retrofit2.http.Param" -> pathParams += annotationNameOrFallback(ann, param.name ?: "path")
 
-                    "retrofit2.http.Query" -> queryParams += annotationNameOrFallback(ann, param.name ?: "query")
+                    "retrofit2.http.Query" -> {
+                        val queryName = annotationNameOrFallback(ann, param.name ?: "query")
+                        queryParams += queryName
+                        val defaultValue = param.name?.let(parameterDefaults::get)
+                        queryParamDetails += EndpointDocDetails.QueryParamDetails(
+                            name = queryName,
+                            type = normalizeParameterType(param.type.presentableText),
+                            required = isQueryRequired(param, defaultValue),
+                            defaultValue = defaultValue
+                        )
+                    }
                     "retrofit2.http.QueryMap" -> hasQueryMap = true
                     "retrofit2.http.Header" -> headerParams += annotationNameOrFallback(ann, param.name ?: "header")
                     "retrofit2.http.HeaderMap" -> hasHeaderMap = true
@@ -103,6 +116,7 @@ internal object EndpointDocDetailsResolver {
             baseUrlFromConfig = baseUrlFromConfig,
             pathParams = pathParams.distinct(),
             queryParams = queryParams.distinct(),
+            queryParamDetails = queryParamDetails.distinctBy { it.name },
             hasQueryMap = hasQueryMap,
             headerParams = headerParams.distinct(),
             hasHeaderMap = hasHeaderMap,
@@ -121,6 +135,51 @@ internal object EndpointDocDetailsResolver {
         )
 
         return cacheAndReturn(cacheKey, resolved)
+    }
+
+    /**
+     * Parses default parameter expressions from Kotlin function declarations when available.
+     */
+    private fun extractKotlinDefaultValues(method: PsiMethod): Map<String, String> {
+        val sourceText = method.navigationElement
+            .takeIf { it.isValid }
+            ?.text
+            ?.takeIf { it.contains(':') && it.contains('=') }
+            ?: return emptyMap()
+
+        val result = LinkedHashMap<String, String>()
+        val defaultRegex = Regex("""([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=,\n)]+=\s*([^,\n)]+)""")
+        defaultRegex.findAll(sourceText).forEach { match ->
+            val paramName = match.groupValues[1].trim()
+            val defaultValue = match.groupValues[2].trim()
+            if (paramName.isNotEmpty() && defaultValue.isNotEmpty()) {
+                result[paramName] = defaultValue
+            }
+        }
+        return result
+    }
+
+    /**
+     * Normalizes presentable type text for query parameter tables.
+     */
+    private fun normalizeParameterType(typeText: String): String {
+        return typeText
+            .removePrefix("kotlin.")
+            .removePrefix("java.lang.")
+            .trim()
+            .ifBlank { "?" }
+    }
+
+    /**
+     * Determines whether query params must be supplied at runtime.
+     */
+    private fun isQueryRequired(param: PsiParameter, defaultValue: String?): Boolean {
+        if (defaultValue != null) return false
+        val nullable = param.annotations.any { ann ->
+            val qName = ann.qualifiedName ?: return@any false
+            qName.endsWith(".Nullable") || qName == "Nullable"
+        }
+        return !nullable
     }
 
     /**

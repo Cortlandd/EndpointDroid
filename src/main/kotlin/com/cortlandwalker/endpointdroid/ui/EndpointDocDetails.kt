@@ -9,6 +9,7 @@ internal data class EndpointDocDetails(
     val baseUrlFromConfig: Boolean,
     val pathParams: List<String>,
     val queryParams: List<String>,
+    val queryParamDetails: List<QueryParamDetails>,
     val hasQueryMap: Boolean,
     val headerParams: List<String>,
     val hasHeaderMap: Boolean,
@@ -26,6 +27,16 @@ internal data class EndpointDocDetails(
     val authRequirement: AuthRequirement
 ) {
     /**
+     * Query parameter metadata used for richer table rendering in endpoint docs.
+     */
+    data class QueryParamDetails(
+        val name: String,
+        val type: String,
+        val required: Boolean,
+        val defaultValue: String?
+    )
+
+    /**
      * Indicates whether authorization header is required, optional, or absent.
      */
     enum class AuthRequirement {
@@ -41,6 +52,7 @@ internal data class EndpointDocDetails(
             baseUrlFromConfig = false,
             pathParams = emptyList(),
             queryParams = emptyList(),
+            queryParamDetails = emptyList(),
             hasQueryMap = false,
             headerParams = emptyList(),
             hasHeaderMap = false,
