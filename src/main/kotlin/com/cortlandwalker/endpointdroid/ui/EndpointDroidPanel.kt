@@ -14,6 +14,7 @@ import com.intellij.ui.components.JBTextArea
 import java.awt.BorderLayout
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.ListSelectionModel
 
 /**
  * Main UI for the EndpointDroid tool window.
@@ -27,11 +28,15 @@ import javax.swing.JSplitPane
  */
 class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) {
 
-    private val endpointList = JBList<Endpoint>()
+    private val endpointList = JBList<Endpoint>().apply {
+        cellRenderer = EndpointListCellRenderer()
+        selectionMode = ListSelectionModel.SINGLE_SELECTION
+        emptyText.text = INITIAL_MESSAGE
+    }
     private val detailsArea = JBTextArea().apply {
         isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
+        lineWrap = false
+        wrapStyleWord = false
     }
 
     private val endpointService = EndpointService.getInstance(project)
