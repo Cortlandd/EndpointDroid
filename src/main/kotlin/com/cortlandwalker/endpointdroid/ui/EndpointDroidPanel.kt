@@ -122,20 +122,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     private fun refreshFromService(selectFirst: Boolean) {
         val previousSelection = endpointList.selectedValue
 
-        // Run the heavy scanning on a background thread
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val endpoints = runCatching {
-                endpointService.refresh()
-                endpointService.getEndpoints()
-            }.getOrElse { error ->
-                ApplicationManager.getApplication().invokeLater {
-                    endpointList.setListData(emptyArray())
-                    showDetailsMessage("$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}")
-                }
-                return@executeOnPooledThread
-            }
-
-            // Switch back to UI thread to update the JList
+        val refreshPromise = endpointService.refreshAsync()
+        refreshPromise.onSuccess { endpoints ->
             ApplicationManager.getApplication().invokeLater {
                 endpointList.setListData(endpoints.toTypedArray())
 
@@ -161,6 +149,12 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
                         showDetailsMessage(SELECT_ENDPOINT_MESSAGE)
                     }
                 }
+            }
+        }
+        refreshPromise.onError { error ->
+            ApplicationManager.getApplication().invokeLater {
+                endpointList.setListData(emptyArray())
+                showDetailsMessage("$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}")
             }
         }
     }

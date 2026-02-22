@@ -1,8 +1,11 @@
 package com.cortlandwalker.endpointdroid.services
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.util.concurrency.AppExecutorUtil
+import org.jetbrains.concurrency.CancellablePromise
 
 /**
  * Project-level service that owns the current snapshot of discovered API endpoints.
@@ -16,22 +19,36 @@ class EndpointService(private val project: Project) {
 
     @Volatile
     private var endpoints: List<Endpoint> = emptyList()
+    @Volatile
+    private var refreshPromise: CancellablePromise<List<Endpoint>>? = null
 
     fun getEndpoints(): List<Endpoint> = endpoints
 
     /**
-     * Refreshes the endpoint cache by scanning the project.
+     * Refreshes the endpoint cache by scanning the project with non-blocking read action semantics.
      *
      * Important:
-     * - This is a synchronous call for MVP simplicity.
-     * - Later we should run scans off the EDT and update UI safely.
+     * - Uses IntelliJ's smart-mode-aware non-blocking read action scheduling.
+     * - Cancels older in-flight refreshes so only the latest scan wins.
      */
-    fun refresh() {
-        val project = this.project
-        val discovered = com.intellij.openapi.application.runReadAction {
-            RetrofitEndpointScanner.scan(project)
+    fun refreshAsync(): CancellablePromise<List<Endpoint>> {
+        refreshPromise?.cancel()
+
+        val promise = ReadAction
+            .nonBlocking<List<Endpoint>> {
+                RetrofitEndpointScanner.scan(project)
+            }
+            .inSmartMode(project)
+            .expireWith(project)
+            .coalesceBy(this, "endpoint-refresh")
+            .submit(AppExecutorUtil.getAppExecutorService())
+
+        refreshPromise = promise
+        promise.onSuccess { discovered ->
+            endpoints = discovered
         }
-        endpoints = discovered
+
+        return promise
     }
 
     companion object {
