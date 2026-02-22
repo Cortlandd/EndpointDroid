@@ -6,6 +6,7 @@ import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.AnnotatedElementsSearch
+import com.intellij.util.Processor
 
 /**
  * Scans a project for Retrofit service methods and extracts endpoint metadata.
@@ -42,6 +43,7 @@ object RetrofitEndpointScanner {
      */
     fun scan(project: Project): List<Endpoint> {
         val results = mutableListOf<Endpoint>()
+        val seenEndpointKeys = HashSet<String>()
         val scope = GlobalSearchScope.projectScope(project)
         val javaFacade = JavaPsiFacade.getInstance(project)
         val baseUrl = BaseUrlResolver.resolve(project)
@@ -51,27 +53,29 @@ object RetrofitEndpointScanner {
             val annotationClass = javaFacade.findClass(annotationFqn, GlobalSearchScope.allScope(project))
                 ?: return@forEach
 
-            val methods = AnnotatedElementsSearch.searchPsiMethods(annotationClass, scope).findAll()
+            AnnotatedElementsSearch.searchPsiMethods(annotationClass, scope)
+                .forEach(Processor { method ->
+                    val cls = method.containingClass ?: return@Processor true
+                    val httpInfo = extractHttpInfo(method) ?: return@Processor true
 
-            for (method in methods) {
-                val cls = method.containingClass ?: continue
-                val httpInfo = extractHttpInfo(method) ?: continue
-
-                results += Endpoint(
-                    httpMethod = httpInfo.method,
-                    path = httpInfo.path,
-                    serviceFqn = cls.qualifiedName ?: cls.name ?: "Unknown",
-                    functionName = method.name,
-                    requestType = extractBodyType(method),
-                    responseType = extractResponseType(method),
-                    baseUrl = baseUrl
-                )
-            }
+                    val endpoint = Endpoint(
+                        httpMethod = httpInfo.method,
+                        path = httpInfo.path,
+                        serviceFqn = cls.qualifiedName ?: cls.name ?: "Unknown",
+                        functionName = method.name,
+                        requestType = extractBodyType(method),
+                        responseType = extractResponseType(method),
+                        baseUrl = baseUrl
+                    )
+                    val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
+                    if (seenEndpointKeys.add(key)) {
+                        results += endpoint
+                    }
+                    true
+                })
         }
 
-        // Remove duplicates caused by scanning across partial stubs / duplicate class names.
         return results
-            .distinctBy { "${it.httpMethod}:${it.serviceFqn}:${it.functionName}:${it.path}" }
             .sortedWith(compareBy({ it.serviceFqn }, { it.path }))
     }
 
