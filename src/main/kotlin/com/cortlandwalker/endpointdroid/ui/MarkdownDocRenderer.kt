@@ -59,13 +59,13 @@ internal object MarkdownDocRenderer {
             }
             appendLine()
 
-            appendLine("Types")
+            appendLine("**Types**")
             appendLine("- Request: ${renderType(ep.requestType)}")
             appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
             if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("Path Parameters")
+                appendLine("**Path Parameters**")
                 pathParams.forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -73,7 +73,7 @@ internal object MarkdownDocRenderer {
 
             if (queryParams.isNotEmpty() || details.hasQueryMap) {
                 appendLine()
-                appendLine("Query Parameters")
+                appendLine("**Query Parameters**")
                 if (queryParams.isNotEmpty()) {
                     appendLine()
                     appendLine(
@@ -98,7 +98,7 @@ internal object MarkdownDocRenderer {
 
             if (headerRows.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
-                appendLine("Header Parameters")
+                appendLine("**Header Parameters**")
                 if (headerRows.isNotEmpty()) {
                     appendLine()
                     appendLine(
@@ -116,7 +116,7 @@ internal object MarkdownDocRenderer {
 
             if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
                 appendLine()
-                appendLine("Form Fields")
+                appendLine("**Form Fields**")
                 details.fieldParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -127,7 +127,7 @@ internal object MarkdownDocRenderer {
 
             if (details.partParams.isNotEmpty() || details.hasPartMap) {
                 appendLine()
-                appendLine("Multipart Parts")
+                appendLine("**Multipart Parts**")
                 details.partParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
@@ -138,7 +138,7 @@ internal object MarkdownDocRenderer {
 
             if (details.hasBody || ep.requestType != null) {
                 appendLine()
-                appendLine("Request body")
+                appendLine("**Request body**")
                 appendLine()
                 appendLine("Type: ${renderType(ep.requestType)}")
                 appendLine("Content-Type: application/json")
@@ -159,17 +159,17 @@ internal object MarkdownDocRenderer {
             }
 
             appendLine()
-            appendLine("Response")
+            appendLine("**Response**")
             appendLine()
             appendLine("Type: ${renderType(ep.responseType, fallback = "Unknown")}")
             appendLine()
-            appendLine("Success")
+            appendLine("**Success**")
             appendLine("- 200 OK")
             appendLine("```json")
             appendLine(details.responseExampleJson ?: details.responseSchemaJson ?: "{}")
             appendLine("```")
             appendLine()
-            appendLine("Error")
+            appendLine("**Error**")
             appendLine("- 400 Bad Request -> ApiError")
             appendLine("- 401 Unauthorized -> ApiError")
             appendLine("```json")
@@ -177,7 +177,7 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("HTTP Client (.http)")
+            appendLine("**HTTP Client (.http)**")
             appendLine("```http")
             appendLine("### $serviceSimpleName.${ep.functionName}")
             appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
@@ -191,7 +191,7 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("Notes")
+            appendLine("**Notes**")
             appendLine("- Authorization header is included only when required (from Retrofit annotations/headers).")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
