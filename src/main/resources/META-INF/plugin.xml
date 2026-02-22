@@ -31,7 +31,7 @@
         <toolWindow
             id="EndpointDroid"
             factoryClass="com.cortlandwalker.endpointdroid.ui.EndpointDroidToolWindowFactory"
-            anchor="right"
+            anchor="bottom"
             icon="/icons/endpointdroid.svg"
             secondary="false"/>
     </extensions>
