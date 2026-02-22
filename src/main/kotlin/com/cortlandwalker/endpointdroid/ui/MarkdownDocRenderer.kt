@@ -1,141 +1,262 @@
 package com.cortlandwalker.endpointdroid.ui
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
+import java.net.URI
 
 /**
- * Builds a markdown document for a selected endpoint.
+ * Builds a compact endpoint details document optimized for fast scanning.
  *
- * The doc is intentionally verbose so users can quickly copy/paste runnable
- * snippets into HTTP Client files while export functionality is evolving.
+ * Formatting decisions in this renderer intentionally minimize noisy output:
+ * optional sections are omitted when empty and the header carries key badges.
  */
 internal object MarkdownDocRenderer {
     /**
-     * Renders endpoint documentation as markdown text.
+     * Renders endpoint details as markdown text for the right-side panel.
      */
     fun render(ep: Endpoint, details: EndpointDocDetails = EndpointDocDetails.empty()): String {
-        val base = ep.baseUrl ?: "{{host}}"
-        val url = if (ep.path.startsWith("http://") || ep.path.startsWith("https://")) {
-            ep.path
+        val method = ep.httpMethod.uppercase()
+        val pathForDisplay = normalizeDisplayPath(ep.path)
+        val pathParams = collectPathParams(ep.path, details.pathParams)
+        val queryParams = details.queryParams.distinct()
+
+        val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
+        val authHint = authHint(details.authRequirement)
+        val paramsBadge = paramsBadge(pathParams.size, queryParams.size)
+
+        val resolvedUrl = resolveUrl(ep.baseUrl, ep.path)
+        val baseUrlLine = if (ep.baseUrl != null) {
+            val source = if (details.baseUrlFromConfig) "config" else "inferred"
+            "Base URL: ${ep.baseUrl.trimEnd('/')}  ($source)"
         } else {
-            base.trimEnd('/') + ep.path
+            "Base URL: {{host}}  (unresolved)"
         }
-        val requestUrl = buildRequestUrl(url, details)
-        val serviceLink = EndpointDocLinks.serviceUrl(ep.serviceFqn)
+
+        val serviceSimpleName = ep.serviceFqn.substringAfterLast('.')
         val functionLink = EndpointDocLinks.functionUrl(ep.serviceFqn, ep.functionName)
-        val methodBadge = methodBadge(ep.httpMethod)
-        val authBadge = authBadge(details.authRequirement)
+        val sourceLabel = if (details.sourceFile != null && details.sourceLine != null) {
+            "${details.sourceFile}:${details.sourceLine}"
+        } else {
+            "${ep.serviceFqn}#${ep.functionName}"
+        }
 
         return buildString {
-            appendLine("# ${methodBadge} Endpoint")
+            appendLine(buildHeaderLine(method, pathForDisplay, authHint, paramsBadge, confidence))
             appendLine()
-            appendLine("- **🎯 Method:** ${methodBadge}")
-            appendLine("- **🛣️ Path:** `${ep.path}`")
-            appendLine("- **🏷️ Service:** [`${ep.serviceFqn}`]($serviceLink)")
-            appendLine("- **⚙️ Function:** [`${ep.functionName}`]($functionLink)")
-            appendLine("- **📍 Source:** [Open function declaration]($functionLink)")
-            if (details.sourceFile != null && details.sourceLine != null) {
-                appendLine("- **🗂️ Source File:** `${details.sourceFile}:${details.sourceLine}`")
-            }
-            appendLine("- **🌐 Base URL:** `${ep.baseUrl ?: "{{host}}"}`")
-            appendLine("- **🔗 Resolved URL:** `$url`")
-            appendLine("- **🔐 Auth Hint:** $authBadge")
+            appendLine("Resolved URL: $resolvedUrl")
+            appendLine(baseUrlLine)
+            appendLine("Source: [$sourceLabel (open)]($functionLink)")
             appendLine()
-            appendLine("## 🧬 Types")
-            appendLine("- **📨 Request:** ${renderTypeLink(ep.requestType)}")
-            appendLine("- **📬 Response:** ${renderTypeLink(ep.responseType)}")
-            appendLine()
-            appendLine("## 🧩 Parameters")
-            appendLine("- **🧭 Path Params:** ${renderNames(details.pathParams)}")
-            appendLine("- **🔎 Query Params:** ${renderNames(details.queryParams)}${if (details.hasQueryMap) " + `@QueryMap`" else ""}")
-            appendLine("- **🧾 Header Params:** ${renderNames(details.headerParams)}${if (details.hasHeaderMap) " + `@HeaderMap`" else ""}")
-            appendLine("- **📝 Form Fields:** ${renderNames(details.fieldParams)}${if (details.hasFieldMap) " + `@FieldMap`" else ""}")
-            appendLine("- **📦 Multipart Parts:** ${renderNames(details.partParams)}${if (details.hasPartMap) " + `@PartMap`" else ""}")
-            appendLine("- **🛰️ Dynamic URL (`@Url`):** ${if (details.hasDynamicUrl) "✅ Yes" else "❌ No"}")
-            appendLine()
-            appendLine("## 🧪 HTTP Client Draft")
-            appendLine("```http")
-            appendLine("${ep.httpMethod.uppercase()} $requestUrl")
-            appendLine("Accept: application/json")
-            details.staticHeaders.forEach { headerLine ->
-                appendLine(headerLine)
-            }
-            details.headerParams
-                .filterNot { it.equals("Authorization", ignoreCase = true) }
-                .forEach { headerName ->
-                    appendLine("$headerName: {{${toPlaceholder(headerName)}}}")
-                }
-            when (details.authRequirement) {
-                EndpointDocDetails.AuthRequirement.REQUIRED -> {
-                    val hasStaticAuthorization = details.staticHeaders.any { header ->
-                        header.substringBefore(':').trim().equals("Authorization", ignoreCase = true)
-                    }
-                    if (!hasStaticAuthorization) {
-                        appendLine("Authorization: Bearer {{token}}")
-                    }
-                }
 
-                EndpointDocDetails.AuthRequirement.OPTIONAL ->
-                    appendLine("# Optional: Authorization: Bearer {{token}}")
+            appendLine("Types")
+            appendLine("- Request: ${renderType(ep.requestType)}")
+            appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
-                EndpointDocDetails.AuthRequirement.NONE -> Unit
-            }
-            if (details.hasBody || ep.requestType != null) {
-                appendLine("Content-Type: application/json")
+            if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("{")
-                appendLine("  // TODO: request payload")
-                appendLine("}")
-            } else if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
-                appendLine("# TODO: add x-www-form-urlencoded body fields")
-            } else if (details.partParams.isNotEmpty() || details.hasPartMap) {
-                appendLine("# TODO: add multipart form-data body parts")
+                appendLine("Path Parameters")
+                pathParams.forEach { name ->
+                    appendLine("- `$name`")
+                }
+            }
+
+            if (queryParams.isNotEmpty()) {
+                appendLine()
+                appendLine("Query Parameters")
+                appendLine("| name | type | required | default |")
+                appendLine("|------|------|----------|---------|")
+                queryParams.forEach { name ->
+                    appendLine("| $name | ? | ? | ? |")
+                }
+            }
+
+            if (details.headerParams.isNotEmpty() || details.hasHeaderMap) {
+                appendLine()
+                appendLine("Header Parameters")
+                details.headerParams.distinct().forEach { name ->
+                    appendLine("- `$name`")
+                }
+                if (details.hasHeaderMap) {
+                    appendLine("- `@HeaderMap` entries")
+                }
+            }
+
+            if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
+                appendLine()
+                appendLine("Form Fields")
+                details.fieldParams.distinct().forEach { name ->
+                    appendLine("- `$name`")
+                }
+                if (details.hasFieldMap) {
+                    appendLine("- `@FieldMap` entries")
+                }
+            }
+
+            if (details.partParams.isNotEmpty() || details.hasPartMap) {
+                appendLine()
+                appendLine("Multipart Parts")
+                details.partParams.distinct().forEach { name ->
+                    appendLine("- `$name`")
+                }
+                if (details.hasPartMap) {
+                    appendLine("- `@PartMap` entries")
+                }
+            }
+
+            appendLine()
+            appendLine("HTTP Client (.http)")
+            appendLine("```http")
+            appendLine("### $serviceSimpleName.${ep.functionName}")
+            appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
+            appendLine("Accept: application/json")
+            if (details.authRequirement == EndpointDocDetails.AuthRequirement.REQUIRED) {
+                appendLine("Authorization: Bearer {{token}}")
             }
             appendLine("```")
+
             appendLine()
-            appendLine("## 📌 Notes")
-            appendLine("- Authorization header appears only when required or likely optional from Retrofit annotations.")
-            if (details.hasQueryMap || details.hasHeaderMap || details.hasFieldMap || details.hasPartMap) {
-                appendLine("- 🧠 This endpoint includes one or more map-based params; expand placeholders as needed.")
+            appendLine("Notes")
+            appendLine("- Authorization header is included only when required from Retrofit annotations/headers.")
+            if (ep.baseUrl == null) {
+                appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
+            } else {
+                appendLine("- `.http` uses `{{host}}` by design; set it in http-client.env.json.")
             }
-            if (details.hasDynamicUrl) {
-                appendLine("- 🚦 `@Url` overrides the path/base URL at runtime; provide `{{full_url}}`.")
-            }
-            appendLine("- 🌍 If Base URL is `{{host}}`, add `endpointdroid.yaml` in your project root.")
         }
     }
 
     /**
-     * Renders a type as a clickable link when available.
+     * Builds the compact one-line endpoint header with status badges.
      */
-    private fun renderTypeLink(type: String?): String {
-        if (type == null) return "None"
+    private fun buildHeaderLine(
+        method: String,
+        pathForDisplay: String,
+        authHint: String,
+        paramsBadge: String?,
+        confidence: String
+    ): String {
+        val badges = mutableListOf("[Retrofit]", "[Auth: $authHint]")
+        if (paramsBadge != null) {
+            badges += "[Params: $paramsBadge]"
+        }
+        badges += "[Confidence: $confidence]"
+        return "$method $pathForDisplay    ${badges.joinToString(" ")}"
+    }
+
+    /**
+     * Renders a type as a declaration link when available.
+     */
+    private fun renderType(type: String?, fallback: String = "None"): String {
+        if (type == null) return fallback
         val link = EndpointDocLinks.typeUrl(type)
         return "[`$type`]($link)"
     }
 
     /**
-     * Renders parameter names as markdown code spans.
+     * Produces an auth badge label from inferred requirement state.
      */
-    private fun renderNames(names: List<String>): String {
-        if (names.isEmpty()) return "None"
-        return names.joinToString(", ") { "`$it`" }
+    private fun authHint(requirement: EndpointDocDetails.AuthRequirement): String {
+        return when (requirement) {
+            EndpointDocDetails.AuthRequirement.REQUIRED -> "Required"
+            EndpointDocDetails.AuthRequirement.OPTIONAL -> "Optional"
+            EndpointDocDetails.AuthRequirement.NONE -> "None"
+        }
     }
 
     /**
-     * Builds a draft request URL with query placeholders.
+     * Computes confidence using available base URL signal quality.
      */
-    private fun buildRequestUrl(baseUrl: String, details: EndpointDocDetails): String {
-        if (details.hasDynamicUrl) return "{{full_url}}"
+    private fun computeConfidence(baseUrl: String?, fromConfig: Boolean): String {
+        val normalized = baseUrl?.trim()
+        if (normalized.isNullOrBlank()) return "Low"
+        return if (fromConfig) "High" else if (looksAbsoluteUrl(normalized)) "Medium" else "Low"
+    }
 
-        val queryParts = mutableListOf<String>()
-        details.queryParams.forEach { queryName ->
-            queryParts += "$queryName={{${toPlaceholder(queryName)}}}"
+    /**
+     * Builds optional parameter summary badge text.
+     */
+    private fun paramsBadge(pathCount: Int, queryCount: Int): String? {
+        val parts = mutableListOf<String>()
+        if (pathCount > 0) parts += "path($pathCount)"
+        if (queryCount > 0) parts += "query($queryCount)"
+        return if (parts.isEmpty()) null else parts.joinToString(", ")
+    }
+
+    /**
+     * Returns a display path, preserving explicit absolute URLs when provided.
+     */
+    private fun normalizeDisplayPath(path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            return path
         }
-        if (details.hasQueryMap) {
-            queryParts += "{{query_key}}={{query_value}}"
+        return if (path.startsWith("/")) path else "/$path"
+    }
+
+    /**
+     * Resolves URL for display by combining base URL and endpoint path safely.
+     */
+    private fun resolveUrl(baseUrl: String?, path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            return path
         }
-        if (queryParts.isEmpty()) return baseUrl
-        return "$baseUrl?${queryParts.joinToString("&")}"
+        val host = (baseUrl ?: "{{host}}").trimEnd('/')
+        val suffix = normalizeDisplayPath(path)
+        return "$host$suffix"
+    }
+
+    /**
+     * Always builds env-friendly HTTP Client request URLs using `{{host}}`.
+     */
+    private fun buildHttpClientUrl(path: String, queryParams: List<String>): String {
+        val requestPath = renderRequestPathPlaceholders(normalizeRequestPath(path))
+        if (queryParams.isEmpty()) return "{{host}}$requestPath"
+
+        // Keep placeholders deterministic and explicit for generated .http snippets.
+        val query = queryParams.joinToString("&") { name ->
+            "$name={{${toPlaceholder(name)}}}"
+        }
+        return "{{host}}$requestPath?$query"
+    }
+
+    /**
+     * Chooses request path component for HTTP snippets even when source path is absolute.
+     */
+    private fun normalizeRequestPath(path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            val uri = runCatching { URI(path) }.getOrNull()
+            val rawPath = uri?.rawPath?.takeIf { it.isNotBlank() } ?: "/"
+            return if (rawPath.startsWith("/")) rawPath else "/$rawPath"
+        }
+        return if (path.startsWith("/")) path else "/$path"
+    }
+
+    /**
+     * Converts Retrofit-style path params (`{id}`) into HTTP Client placeholders (`{{id}}`).
+     */
+    private fun renderRequestPathPlaceholders(path: String): String {
+        return Regex("\\{([^}/]+)\\}").replace(path) { match ->
+            "{{${toPlaceholder(match.groupValues[1])}}}"
+        }
+    }
+
+    /**
+     * Collects path params from both Retrofit metadata and `{param}` path tokens.
+     */
+    private fun collectPathParams(path: String, declared: List<String>): List<String> {
+        val merged = LinkedHashSet<String>()
+        declared.forEach { merged += it }
+        Regex("\\{([^}/]+)\\}")
+            .findAll(path)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotEmpty() }
+            .forEach { merged += it }
+        return merged.toList()
+    }
+
+    /**
+     * Checks whether a string is an absolute HTTP(S) URL.
+     */
+    private fun looksAbsoluteUrl(value: String): Boolean {
+        return value.startsWith("http://") || value.startsWith("https://")
     }
 
     /**
@@ -147,32 +268,5 @@ internal object MarkdownDocRenderer {
             .trim('_')
             .lowercase()
             .ifBlank { "value" }
-    }
-
-    /**
-     * Returns a colorful emoji badge per HTTP method.
-     */
-    private fun methodBadge(method: String): String {
-        return when (method.uppercase()) {
-            "GET" -> "🟢 GET"
-            "POST" -> "🔵 POST"
-            "PUT" -> "🟡 PUT"
-            "PATCH" -> "🟣 PATCH"
-            "DELETE" -> "🔴 DELETE"
-            "HEAD" -> "⚪ HEAD"
-            "OPTIONS" -> "🟠 OPTIONS"
-            else -> "⚫ ${method.uppercase()}"
-        }
-    }
-
-    /**
-     * Returns a visual authorization status badge.
-     */
-    private fun authBadge(requirement: EndpointDocDetails.AuthRequirement): String {
-        return when (requirement) {
-            EndpointDocDetails.AuthRequirement.REQUIRED -> "🔒 Required"
-            EndpointDocDetails.AuthRequirement.OPTIONAL -> "🟨 Optional"
-            EndpointDocDetails.AuthRequirement.NONE -> "🟢 None"
-        }
     }
 }

@@ -11,6 +11,8 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiModificationTracker
 import kotlin.io.path.Path
 import kotlin.io.path.invariantSeparatorsPathString
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -21,6 +23,9 @@ import java.util.concurrent.ConcurrentHashMap
 internal object EndpointDocDetailsResolver {
     private const val RETROFIT_PREFIX = "retrofit2.http."
     private const val AUTHORIZATION_HEADER = "Authorization"
+    private const val CONFIG_FILE_NAME = "endpointdroid.yaml"
+    private const val CONFIG_BASE_URL_KEY = "baseUrl"
+    private const val CONFIG_BASE_URL_SNAKE_KEY = "base_url"
     private const val MAX_CACHE_ENTRIES = 2048
     private val detailsCache = ConcurrentHashMap<DetailsCacheKey, EndpointDocDetails>()
 
@@ -38,8 +43,11 @@ internal object EndpointDocDetailsResolver {
         )
         detailsCache[cacheKey]?.let { return it }
 
-        val method = findEndpointMethod(project, endpoint)
-            ?: return cacheAndReturn(cacheKey, EndpointDocDetails.empty())
+        val baseUrlFromConfig = isConfiguredBaseUrl(project, endpoint.baseUrl)
+        val method = findEndpointMethod(project, endpoint) ?: return cacheAndReturn(
+            cacheKey,
+            EndpointDocDetails.empty().copy(baseUrlFromConfig = baseUrlFromConfig)
+        )
         val source = resolveSourceLocation(project, method)
 
         val pathParams = mutableListOf<String>()
@@ -88,6 +96,7 @@ internal object EndpointDocDetailsResolver {
         val resolved = EndpointDocDetails(
             sourceFile = source.file,
             sourceLine = source.line,
+            baseUrlFromConfig = baseUrlFromConfig,
             pathParams = pathParams.distinct(),
             queryParams = queryParams.distinct(),
             hasQueryMap = hasQueryMap,
@@ -104,6 +113,45 @@ internal object EndpointDocDetailsResolver {
         )
 
         return cacheAndReturn(cacheKey, resolved)
+    }
+
+    /**
+     * Checks whether the endpoint base URL matches an explicit config override value.
+     */
+    private fun isConfiguredBaseUrl(project: Project, endpointBaseUrl: String?): Boolean {
+        val normalizedEndpointBase = endpointBaseUrl?.trim()?.trimEnd('/') ?: return false
+        val basePath = project.basePath ?: return false
+        val configPath = java.nio.file.Path.of(basePath, CONFIG_FILE_NAME)
+        if (!Files.isRegularFile(configPath)) return false
+
+        val lines = runCatching { Files.readAllLines(configPath, StandardCharsets.UTF_8) }
+            .getOrNull()
+            ?: return false
+
+        for (line in lines) {
+            val content = line.substringBefore('#').trim()
+            if (content.isEmpty()) continue
+
+            val key = when {
+                content.startsWith("$CONFIG_BASE_URL_KEY:") -> CONFIG_BASE_URL_KEY
+                content.startsWith("$CONFIG_BASE_URL_SNAKE_KEY:") -> CONFIG_BASE_URL_SNAKE_KEY
+                else -> null
+            } ?: continue
+
+            val configuredBase = content
+                .removePrefix("$key:")
+                .trim()
+                .removeSurrounding("\"")
+                .removeSurrounding("'")
+                .trim()
+                .trimEnd('/')
+
+            if (configuredBase.equals(normalizedEndpointBase, ignoreCase = true)) {
+                return true
+            }
+        }
+
+        return false
     }
 
     /**

@@ -6,6 +6,7 @@ package com.cortlandwalker.endpointdroid.ui
 internal data class EndpointDocDetails(
     val sourceFile: String?,
     val sourceLine: Int?,
+    val baseUrlFromConfig: Boolean,
     val pathParams: List<String>,
     val queryParams: List<String>,
     val hasQueryMap: Boolean,
@@ -33,6 +34,7 @@ internal data class EndpointDocDetails(
         fun empty(): EndpointDocDetails = EndpointDocDetails(
             sourceFile = null,
             sourceLine = null,
+            baseUrlFromConfig = false,
             pathParams = emptyList(),
             queryParams = emptyList(),
             hasQueryMap = false,
