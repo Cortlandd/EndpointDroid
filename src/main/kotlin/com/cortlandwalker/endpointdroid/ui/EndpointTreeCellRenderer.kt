@@ -39,6 +39,8 @@ internal class EndpointTreeCellRenderer(
     private fun renderEndpoint(endpoint: Endpoint, selected: Boolean) {
         val method = endpoint.httpMethod.uppercase()
         append("[$method]", methodAttributes(method))
+        // Keep pills readable as `[GET]` (no internal trailing space) while preserving
+        // aligned path columns by applying fixed-width padding after the closing bracket.
         val trailingPad = (METHOD_WIDTH - method.length).coerceAtLeast(0)
         if (trailingPad > 0) {
             append(" ".repeat(trailingPad), SimpleTextAttributes.REGULAR_ATTRIBUTES)
