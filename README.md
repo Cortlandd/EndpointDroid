@@ -20,8 +20,9 @@ Current flow:
 
 1. Open your Android project.
 2. Open the `EndpointDroid` Tool Window.
-3. Click `Refresh`.
-4. Endpoints appear in the list; selecting one shows details.
+3. Click `Refresh` to scan.
+4. Click `Config` to open/create `endpointdroid.yaml` overrides.
+5. Endpoints appear in the list; selecting one shows details.
 
 Example details panel output:
 
@@ -129,24 +130,62 @@ EndpointDroid resolves a project-level base URL in this order:
 File location:
 
 - `<your-android-project>/endpointdroid.yaml`
+- `<your-android-project>/.endpointdroid.yaml`
 
-Supported keys:
+Supported scalar keys:
 
 - `baseUrl`
 - `base_url`
+- `defaultEnv`
+- `default_env`
+
+Supported map sections:
+
+- `environments`
+- `serviceBaseUrls`
+- `servicePaths`
+- `serviceRequestTypes`
+- `serviceResponseTypes`
+
+Map keys can target:
+
+- Service-level override: `com.example.api.SotwApi`
+- Endpoint-level override: `com.example.api.SotwApi#search`
 
 Example:
 
 ```yaml
 baseUrl: https://api.example.com
+# defaultEnv: dev
+
+environments:
+  dev: https://dev.api.example.com
+  stage: https://stage.api.example.com
+  prod: https://api.example.com
+
+serviceBaseUrls:
+  com.example.api.SotwApi: prod
+  com.example.api.AuthApi#login: https://auth.api.example.com
+
+servicePaths:
+  com.example.api.AuthApi#login: /v1/login
+
+serviceRequestTypes:
+  com.example.api.AuthApi#login: LoginRequest
+
+serviceResponseTypes:
+  com.example.api.AuthApi#login: TokenResponse
 ```
 
 Rules:
 
-- Config wins over heuristics.
+- Config wins over scanner heuristics.
+- `service*` endpoint-level (`Service#function`) keys win over service-level keys.
 - Value must start with `http://` or `https://`.
 - Trailing `/` is trimmed for stable URL joining.
 - Inline comments (`# ...`) are ignored.
+- `serviceBaseUrls` values can be an absolute URL or an `environments` key.
+- If `servicePaths` is absolute (`https://...`), EndpointDroid derives both path and base URL.
 
 ### Heuristics (Supported Now)
 
@@ -157,9 +196,9 @@ If config is missing, EndpointDroid scans project source for:
 
 ### Planned (Not Yet Implemented)
 
-- `.endpointdroid.yaml` alternate filename
-- Environment map (`dev`/`stage`/`prod`) + default environment
-- Per-service base URL mapping (`serviceFqn -> env/host`)
+- Dedicated settings UI for editing config in-IDE.
+- Validation diagnostics for malformed override keys.
+- Export config assistant for generated `.http` environments.
 
 ## Constraints and Safety Rules
 

@@ -1,6 +1,7 @@
 package com.cortlandwalker.endpointdroid.ui
 
 import com.cortlandwalker.endpointdroid.model.Endpoint
+import com.cortlandwalker.endpointdroid.services.EndpointConfigResolver
 import com.cortlandwalker.endpointdroid.services.EndpointService
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -13,6 +14,7 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
@@ -29,6 +31,9 @@ import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JEditorPane
@@ -103,6 +108,15 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
             add(object : DumbAwareAction("Refresh", "Re-scan endpoints", AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
                     scheduleRefresh(selectFirst = false)
+                }
+            })
+            add(object : DumbAwareAction(
+                "Config",
+                "Open or create endpointdroid.yaml overrides",
+                AllIcons.General.Settings
+            ) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    openOrCreateConfigFile()
                 }
             })
             add(object : DumbAwareAction(
@@ -585,6 +599,61 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      */
     private fun showDetailsMessage(message: String) {
         renderMarkdownDetails(message)
+    }
+
+    /**
+     * Opens an existing config file, or creates a template config file and opens it.
+     */
+    private fun openOrCreateConfigFile() {
+        val defaultPath = EndpointConfigResolver.defaultConfigPath(project)
+        if (defaultPath == null) {
+            showDetailsMessage("Cannot open config: project base path is unavailable.")
+            return
+        }
+
+        showDetailsMessage("Opening EndpointDroid config...")
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val configPath = EndpointConfigResolver.resolveConfigPath(project) ?: defaultPath
+
+            val created = runCatching {
+                if (Files.isRegularFile(configPath)) {
+                    false
+                } else {
+                    // File creation is off-EDT because VFS and NIO I/O can block.
+                    Files.createDirectories(configPath.parent)
+                    Files.writeString(
+                        configPath,
+                        EndpointConfigResolver.templateContent(),
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE_NEW
+                    )
+                    true
+                }
+            }.getOrElse { error ->
+                ApplicationManager.getApplication().invokeLater {
+                    showDetailsMessage("Failed to create config: ${error.message ?: error::class.java.simpleName}")
+                }
+                return@executeOnPooledThread
+            }
+
+            val virtualFile = LocalFileSystem.getInstance()
+                .refreshAndFindFileByNioFile(configPath)
+
+            ApplicationManager.getApplication().invokeLater {
+                if (virtualFile == null) {
+                    showDetailsMessage("Config exists at: $configPath")
+                    return@invokeLater
+                }
+
+                OpenFileDescriptor(project, virtualFile, 0).navigate(true)
+                if (created) {
+                    showDetailsMessage(
+                        "Created endpointdroid.yaml template.\n\nEdit overrides, then click Refresh."
+                    )
+                }
+            }
+        }
     }
 
     private fun selectedMethods(): Set<String> {

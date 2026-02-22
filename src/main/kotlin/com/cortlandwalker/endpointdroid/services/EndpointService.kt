@@ -88,11 +88,25 @@ class EndpointService(private val project: Project) {
     private fun mergeAndSortEndpoints(vararg sources: List<Endpoint>): List<Endpoint> {
         val mergedByKey = linkedMapOf<String, Endpoint>()
         sources.asSequence().flatten().forEach { endpoint ->
-            val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
+            val key = endpointIdentityKey(endpoint)
             mergedByKey.putIfAbsent(key, endpoint)
         }
-        return mergedByKey.values.toList()
+
+        val configured = EndpointConfigResolver.apply(project, mergedByKey.values.toList())
+        val configuredByKey = linkedMapOf<String, Endpoint>()
+        configured.forEach { endpoint ->
+            configuredByKey.putIfAbsent(endpointIdentityKey(endpoint), endpoint)
+        }
+
+        return configuredByKey.values.toList()
             .sortedWith(compareBy({ it.serviceFqn }, { it.path }, { it.functionName }))
+    }
+
+    /**
+     * Builds a stable identity key used for endpoint de-duplication.
+     */
+    private fun endpointIdentityKey(endpoint: Endpoint): String {
+        return "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
     }
 
     companion object {
