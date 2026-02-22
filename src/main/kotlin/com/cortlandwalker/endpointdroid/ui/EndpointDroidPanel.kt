@@ -20,6 +20,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.PsiShortNamesCache
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import javax.swing.JEditorPane
 import javax.swing.JPanel
@@ -47,6 +48,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
     private val detailsPane = JEditorPane("text/html", "").apply {
         isEditable = false
+        putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
+        foreground = UIUtil.getLabelForeground()
+        background = UIUtil.getPanelBackground()
+        font = UIUtil.getLabelFont()
     }
     private val splitPane = JSplitPane(
         JSplitPane.HORIZONTAL_SPLIT,

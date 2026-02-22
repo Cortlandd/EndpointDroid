@@ -24,9 +24,10 @@ internal object MarkdownHtmlRenderer {
         }.getOrElse {
             "<pre>${escapeHtml(markdown)}</pre>"
         }
+        val bodyWithTables = addTableBorders(renderedBody)
 
         // Avoid CSS to prevent Swing HTML parser edge-case crashes.
-        return "<html><body>$renderedBody</body></html>"
+        return "<html><body>$bodyWithTables</body></html>"
     }
 
     /**
@@ -37,5 +38,20 @@ internal object MarkdownHtmlRenderer {
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
+    }
+
+    /**
+     * Adds legacy HTML table border attributes so markdown tables remain readable in Swing HTML.
+     */
+    private fun addTableBorders(html: String): String {
+        return Regex("<table(\\s[^>]*)?>")
+            .replace(html) { match ->
+                val attrs = match.groupValues.getOrElse(1) { "" }
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"
+                }
+            }
     }
 }
