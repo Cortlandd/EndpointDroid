@@ -9,10 +9,12 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
@@ -53,7 +55,12 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         emptyText.text = EMPTY_LIST_MESSAGE
     }
     private val detailsVirtualFile = LightVirtualFile("EndpointDroidDetails.md", MarkdownFileType.INSTANCE, "")
-    private val markdownPreviewPanel = createMarkdownPreviewPanel(project, detailsVirtualFile)
+    private val previewContextFile = project.basePath
+        ?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+        ?: detailsVirtualFile
+    private val markdownPreviewProvider = MarkdownHtmlPanelProvider.getAvailableProviders().firstOrNull()
+    private val markdownSourcePreprocessor = markdownPreviewProvider?.sourceTextPreprocessor
+    private val markdownPreviewPanel = createMarkdownPreviewPanel(project, previewContextFile, markdownPreviewProvider)
     private val detailsPaneFallback = JEditorPane("text/html", "").apply {
         isEditable = false
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
@@ -212,9 +219,16 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         detailsVirtualFile.setContent(this, markdown, false)
 
         val previewPanel = markdownPreviewPanel
-        if (previewPanel != null) {
-            // Markdown preview panels expect markdown source and perform their own rendering pipeline.
-            previewPanel.setHtml(markdown, 0, detailsVirtualFile)
+        val sourcePreprocessor = markdownSourcePreprocessor
+        if (previewPanel != null && sourcePreprocessor != null) {
+            val html = MarkdownHtmlRenderer.toPreviewHtml(
+                project = project,
+                virtualFile = previewContextFile,
+                markdown = markdown,
+                preprocessor = sourcePreprocessor,
+                createDocument = { text -> EditorFactory.getInstance().createDocument(text) }
+            )
+            previewPanel.setHtml(html, 0, 0, previewContextFile)
             return
         }
 
@@ -351,9 +365,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     /**
      * Creates a JetBrains Markdown preview panel, falling back to Swing HTML when unavailable.
      */
-    private fun createMarkdownPreviewPanel(project: Project, markdownFile: LightVirtualFile): MarkdownHtmlPanel? {
-        val provider = MarkdownHtmlPanelProvider.getAvailableProviders().firstOrNull() ?: return null
-        return runCatching { provider.createHtmlPanel(project, markdownFile) }.getOrNull()
+    private fun createMarkdownPreviewPanel(
+        project: Project,
+        contextFile: com.intellij.openapi.vfs.VirtualFile,
+        provider: MarkdownHtmlPanelProvider?
+    ): MarkdownHtmlPanel? {
+        provider ?: return null
+        return runCatching { provider.createHtmlPanel(project, contextFile) }.getOrNull()
     }
 
     override fun dispose() {
