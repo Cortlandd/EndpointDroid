@@ -14,8 +14,8 @@ import java.util.concurrent.CancellationException
  * Project-level service that owns the current snapshot of discovered API endpoints.
  *
  * v0 behavior:
- * - [refresh] performs a best-effort scan for Retrofit endpoints.
- * - Future steps add baseUrl inference/config and additional providers (Ktor/OkHttp/etc).
+ * - [refresh] performs a best-effort scan for Retrofit and OkHttp endpoints.
+ * - Future steps add additional providers (Ktor/Volley/etc).
  */
 @Service(Service.Level.PROJECT)
 class EndpointService(private val project: Project) {
@@ -43,7 +43,10 @@ class EndpointService(private val project: Project) {
 
         val promise = ReadAction
             .nonBlocking<List<Endpoint>> {
-                RetrofitEndpointScanner.scan(project)
+                mergeAndSortEndpoints(
+                    RetrofitEndpointScanner.scan(project),
+                    OkHttpEndpointScanner.scan(project)
+                )
             }
             .inSmartMode(project)
             .expireWith(project)
@@ -78,6 +81,19 @@ class EndpointService(private val project: Project) {
     }
 
     private fun nanosToMillis(nanos: Long): Long = nanos / 1_000_000L
+
+    /**
+     * Merges scanner outputs while keeping endpoint identity stable across refreshes.
+     */
+    private fun mergeAndSortEndpoints(vararg sources: List<Endpoint>): List<Endpoint> {
+        val mergedByKey = linkedMapOf<String, Endpoint>()
+        sources.asSequence().flatten().forEach { endpoint ->
+            val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
+            mergedByKey.putIfAbsent(key, endpoint)
+        }
+        return mergedByKey.values.toList()
+            .sortedWith(compareBy({ it.serviceFqn }, { it.path }, { it.functionName }))
+    }
 
     companion object {
         private val LOG = Logger.getInstance(EndpointService::class.java)

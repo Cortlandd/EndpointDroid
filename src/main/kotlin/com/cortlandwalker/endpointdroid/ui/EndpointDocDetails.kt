@@ -4,6 +4,7 @@ package com.cortlandwalker.endpointdroid.ui
  * Parsed endpoint details used to enrich documentation and HTTP draft output.
  */
 internal data class EndpointDocDetails(
+    val providerLabel: String,
     val sourceFile: String?,
     val sourceLine: Int?,
     val baseUrlFromConfig: Boolean,
@@ -47,6 +48,7 @@ internal data class EndpointDocDetails(
 
     companion object {
         fun empty(): EndpointDocDetails = EndpointDocDetails(
+            providerLabel = "Unknown",
             sourceFile = null,
             sourceLine = null,
             baseUrlFromConfig = false,

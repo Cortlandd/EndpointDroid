@@ -29,6 +29,9 @@ internal object MarkdownDocRenderer {
         val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
         val authHint = authHint(details.authRequirement)
         val paramsBadge = paramsBadge(pathParams.size, queryParams.size)
+        val providerLabel = details.providerLabel
+            .takeUnless { it.isBlank() || it == "Unknown" }
+            ?: inferProviderLabel(ep)
 
         val resolvedUrl = resolveUrl(ep.baseUrl, ep.path)
         val baseUrlValue = ep.baseUrl?.trimEnd('/') ?: "{{host}}"
@@ -47,7 +50,7 @@ internal object MarkdownDocRenderer {
         }
 
         return buildString {
-            appendLine(buildHeaderLine(method, pathForDisplay, authHint, paramsBadge, confidence))
+            appendLine(buildHeaderLine(method, pathForDisplay, providerLabel, authHint, paramsBadge, confidence))
             appendLine()
             // Use markdown hard breaks so summary lines don't collapse into one paragraph.
             appendLine("Resolved URL: `$resolvedUrl`  ")
@@ -191,7 +194,7 @@ internal object MarkdownDocRenderer {
 
             appendLine()
             appendLine(sectionTitle("Notes"))
-            appendLine("- Authorization header is included only when required (from Retrofit annotations/headers).")
+            appendLine("- Authorization header is included only when required (from endpoint metadata/headers).")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
             } else {
@@ -267,16 +270,25 @@ internal object MarkdownDocRenderer {
     private fun buildHeaderLine(
         method: String,
         pathForDisplay: String,
+        providerLabel: String,
         authHint: String,
         paramsBadge: String?,
         confidence: String
     ): String {
-        val badges = mutableListOf("[Retrofit]", "[Auth: $authHint]")
+        val badges = mutableListOf("[$providerLabel]", "[Auth: $authHint]")
         if (paramsBadge != null) {
             badges += "[Params: $paramsBadge]"
         }
         badges += "[Confidence: $confidence]"
         return "$method $pathForDisplay    ${badges.joinToString(" ")}"
+    }
+
+    /**
+     * Uses endpoint naming hints when provider-specific details are unavailable.
+     */
+    private fun inferProviderLabel(endpoint: Endpoint): String {
+        val service = endpoint.serviceFqn.lowercase()
+        return if (service.contains("okhttp")) "OkHttp" else "Retrofit"
     }
 
     /**
