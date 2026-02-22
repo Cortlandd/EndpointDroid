@@ -38,6 +38,7 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JEditorPane
+import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.JTabbedPane
@@ -67,8 +68,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
     private val sourceTabs = JTabbedPane().apply {
         tabPlacement = JTabbedPane.TOP
         addTab(SourceTab.SCANNED.label, JBScrollPane(scannedTreeContext.tree))
-        addTab(SourceTab.POSTMAN.label, JBScrollPane(postmanTreeContext.tree))
-        addTab(SourceTab.INSOMNIA.label, JBScrollPane(insomniaTreeContext.tree))
+        addTab(SourceTab.POSTMAN.label, buildImportTabPanel(SourceTab.POSTMAN, postmanTreeContext.tree))
+        addTab(SourceTab.INSOMNIA.label, buildImportTabPanel(SourceTab.INSOMNIA, insomniaTreeContext.tree))
     }
 
     private val searchField = SearchTextField().apply {
@@ -121,15 +122,6 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
             ) {
                 override fun actionPerformed(e: AnActionEvent) {
                     openOrCreateConfigFile()
-                }
-            })
-            add(object : DumbAwareAction(
-                "Import Collection",
-                "Import a Postman or Insomnia collection (coming soon)",
-                null
-            ) {
-                override fun actionPerformed(e: AnActionEvent) {
-                    showDetailsMessage(IMPORT_COLLECTION_PLACEHOLDER_MESSAGE)
                 }
             })
         }
@@ -437,6 +429,46 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         return JPanel(BorderLayout()).apply {
             add(controls, BorderLayout.NORTH)
             add(sourceTabs, BorderLayout.CENTER)
+        }
+    }
+
+    /**
+     * Builds import-focused tab content for Postman/Insomnia sources.
+     */
+    private fun buildImportTabPanel(source: SourceTab, tree: Tree): JPanel {
+        val importButton = JButton(importButtonLabel(source)).apply {
+            addActionListener {
+                onImportButtonClicked(source)
+            }
+        }
+
+        val controls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            add(importButton)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            add(controls, BorderLayout.NORTH)
+            add(JBScrollPane(tree), BorderLayout.CENTER)
+        }
+    }
+
+    /**
+     * Handles source-specific import button clicks.
+     */
+    private fun onImportButtonClicked(source: SourceTab) {
+        val message = when (source) {
+            SourceTab.POSTMAN -> POSTMAN_IMPORT_PLACEHOLDER_MESSAGE
+            SourceTab.INSOMNIA -> INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE
+            SourceTab.SCANNED -> return
+        }
+        showDetailsMessage(message)
+    }
+
+    private fun importButtonLabel(source: SourceTab): String {
+        return when (source) {
+            SourceTab.POSTMAN -> "Import Postman Collection"
+            SourceTab.INSOMNIA -> "Import Insomnia Export"
+            SourceTab.SCANNED -> "Import"
         }
     }
 
@@ -926,8 +958,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
         const val SELECTED_SOURCE_TAB_KEY = "endpointdroid.selected.source.tab"
-        const val IMPORT_COLLECTION_PLACEHOLDER_MESSAGE =
-            "Import collection support is coming soon.\n\nPlanned: Postman + Insomnia import."
+        const val POSTMAN_IMPORT_PLACEHOLDER_MESSAGE =
+            "Postman import support is coming soon.\n\nPlanned: parse collection and populate the Postman tab."
+        const val INSOMNIA_IMPORT_PLACEHOLDER_MESSAGE =
+            "Insomnia import support is coming soon.\n\nPlanned: parse export and populate the Insomnia tab."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
         const val DETAILS_FAILED_PREFIX = "Endpoint details failed:"
         val METHOD_OPTIONS = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "HTTP")
