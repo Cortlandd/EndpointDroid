@@ -28,7 +28,6 @@ internal object MarkdownDocRenderer {
         val queryParams = queryDetails.map { it.name }
         val headerRows = buildHeaderRows(details)
 
-        val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
         val authHint = authHint(details.authRequirement)
         val paramsBadge = paramsBadge(pathParams.size, queryParams.size)
         val providerLabel = details.providerLabel
@@ -57,7 +56,7 @@ internal object MarkdownDocRenderer {
         val errorResponsePreview = previewJson(DEFAULT_API_ERROR_JSON)
 
         return buildString {
-            appendLine(buildHeaderLine(method, pathForDisplay, providerLabel, authHint, paramsBadge, confidence))
+            appendLine(buildHeaderLine(method, pathForDisplay, providerLabel, authHint, paramsBadge))
             appendLine()
             appendLine("- Resolved URL: `$resolvedUrl`")
             appendLine("- Base URL: `$baseUrlValue` ($baseUrlSource)")
@@ -86,19 +85,18 @@ internal object MarkdownDocRenderer {
                 appendLine(sectionTitle("Query Parameters"))
                 if (queryParams.isNotEmpty()) {
                     appendLine()
-                    appendLine(
-                        renderMarkdownTable(
-                            headers = listOf("name", "type", "required", "default"),
-                            rows = queryDetails.map { query ->
-                                listOf(
-                                    query.name,
-                                    query.type.ifBlank { "?" },
-                                    if (query.required) "yes" else "no",
-                                    query.defaultValue ?: "-"
-                                )
-                            }
-                        )
-                    )
+                    appendLine(renderMarkdownTable(
+                        headers = listOf("name", "type", "required", "default"),
+                        rows = queryDetails.map { query ->
+                            listOf(
+                                query.name,
+                                query.type.ifBlank { "?" },
+                                if (query.required) "yes" else "no",
+                                query.defaultValue ?: "-"
+                            )
+                        }
+                    ))
+                    appendLine()
                 }
                 if (details.hasQueryMap) {
                     appendLine()
@@ -111,12 +109,8 @@ internal object MarkdownDocRenderer {
                 appendLine(sectionTitle("Header Parameters"))
                 if (headerRows.isNotEmpty()) {
                     appendLine()
-                    appendLine(
-                        renderMarkdownTable(
-                            headers = listOf("name", "source", "value"),
-                            rows = headerRows
-                        )
-                    )
+                    appendLine(renderMarkdownTable(headers = listOf("name", "source", "value"), rows = headerRows))
+                    appendLine()
                 }
                 if (details.hasHeaderMap) {
                     appendLine()
@@ -149,17 +143,23 @@ internal object MarkdownDocRenderer {
             appendLine()
             appendLine(sectionTitle("HTTP Client (.http)"))
             appendLine()
-            appendLine("```http")
-            appendLine("### $serviceSimpleName.${ep.functionName}")
-            appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
-            if (details.hasQueryMap) {
-                appendLine("# Add @QueryMap entries to the URL as needed.")
-            }
-            appendLine("Accept: application/json")
-            if (details.authRequirement == EndpointDocDetails.AuthRequirement.REQUIRED) {
-                appendLine("Authorization: Bearer {{token}}")
-            }
-            appendLine("```")
+            appendLine(
+                fencedCodeBlock(
+                    language = "http",
+                    body = buildString {
+                        appendLine("### $serviceSimpleName.${ep.functionName}")
+                        appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
+                        if (details.hasQueryMap) {
+                            appendLine("# Add @QueryMap entries to the URL as needed.")
+                        }
+                        appendLine("Accept: application/json")
+                        if (details.authRequirement == EndpointDocDetails.AuthRequirement.REQUIRED) {
+                            appendLine("Authorization: Bearer {{token}}")
+                        }
+                    }
+                )
+            )
+            appendLine()
 
             if (details.hasBody || ep.requestType != null) {
                 appendLine()
@@ -169,9 +169,8 @@ internal object MarkdownDocRenderer {
                 details.requestSchemaJson?.let {
                     appendLine()
                     appendLine("Schema (from model):")
-                    appendLine("```json")
-                    appendLine(requestSchemaPreview.content)
-                    appendLine("```")
+                    appendLine()
+                    appendLine(fencedCodeBlock("json", requestSchemaPreview.content))
                     if (requestSchemaPreview.truncated) {
                         appendLine("_Schema preview truncated for readability._")
                     }
@@ -179,9 +178,8 @@ internal object MarkdownDocRenderer {
                 details.requestExampleJson?.let {
                     appendLine()
                     appendLine("Example:")
-                    appendLine("```json")
-                    appendLine(requestExamplePreview.content)
-                    appendLine("```")
+                    appendLine()
+                    appendLine(fencedCodeBlock("json", requestExamplePreview.content))
                     if (requestExamplePreview.truncated) {
                         appendLine("_Example preview truncated for readability._")
                     }
@@ -194,9 +192,8 @@ internal object MarkdownDocRenderer {
             appendLine()
             appendLine(sectionTitle("Success"))
             appendLine("- 200 OK")
-            appendLine("```json")
-            appendLine(successResponsePreview.content)
-            appendLine("```")
+            appendLine()
+            appendLine(fencedCodeBlock("json", successResponsePreview.content))
             if (successResponsePreview.truncated) {
                 appendLine("_Response preview truncated for readability._")
             }
@@ -204,9 +201,8 @@ internal object MarkdownDocRenderer {
             appendLine(sectionTitle("Error"))
             appendLine("- 400 Bad Request -> ApiError")
             appendLine("- 401 Unauthorized -> ApiError")
-            appendLine("```json")
-            appendLine(errorResponsePreview.content)
-            appendLine("```")
+            appendLine()
+            appendLine(fencedCodeBlock("json", errorResponsePreview.content))
 
             appendLine()
             appendLine(sectionTitle("Notes"))
@@ -291,14 +287,12 @@ internal object MarkdownDocRenderer {
         pathForDisplay: String,
         providerLabel: String,
         authHint: String,
-        paramsBadge: String?,
-        confidence: String
+        paramsBadge: String?
     ): String {
         val badges = mutableListOf("[$providerLabel]", "[Auth: $authHint]")
         if (paramsBadge != null) {
             badges += "[Params: $paramsBadge]"
         }
-        badges += "[Confidence: $confidence]"
         return "$method $pathForDisplay    ${badges.joinToString(" ")}"
     }
 
@@ -328,15 +322,6 @@ internal object MarkdownDocRenderer {
             EndpointDocDetails.AuthRequirement.OPTIONAL -> "Optional"
             EndpointDocDetails.AuthRequirement.NONE -> "None"
         }
-    }
-
-    /**
-     * Computes confidence using available base URL signal quality.
-     */
-    private fun computeConfidence(baseUrl: String?, fromConfig: Boolean): String {
-        val normalized = baseUrl?.trim()
-        if (normalized.isNullOrBlank()) return "Low"
-        return if (fromConfig || looksAbsoluteUrl(normalized)) "High" else "Medium"
     }
 
     /**
@@ -421,13 +406,6 @@ internal object MarkdownDocRenderer {
     }
 
     /**
-     * Checks whether a string is an absolute HTTP(S) URL.
-     */
-    private fun looksAbsoluteUrl(value: String): Boolean {
-        return value.startsWith("http://") || value.startsWith("https://")
-    }
-
-    /**
      * Normalizes arbitrary names into HTTP Client placeholder tokens.
      */
     private fun toPlaceholder(name: String): String {
@@ -463,4 +441,21 @@ internal object MarkdownDocRenderer {
         val content: String,
         val truncated: Boolean
     )
+
+    /**
+     * Emits fenced code blocks with consistent spacing so markdown parsers recognize them.
+     */
+    private fun fencedCodeBlock(language: String, body: String): String {
+        val normalizedBody = body.trimEnd()
+        return buildString {
+            append("```")
+            append(language)
+            append('\n')
+            append(normalizedBody)
+            if (!normalizedBody.endsWith('\n')) {
+                append('\n')
+            }
+            append("```")
+        }
+    }
 }
