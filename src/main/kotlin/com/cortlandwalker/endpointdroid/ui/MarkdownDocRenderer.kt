@@ -21,14 +21,14 @@ internal object MarkdownDocRenderer {
 
         val confidence = computeConfidence(ep.baseUrl, details.baseUrlFromConfig)
         val authHint = authHint(details.authRequirement)
-        val paramsBadge = paramsBadge(pathParams.size, queryParams.size)
+        val paramsBadge = paramsBadge(pathParams.size, queryParams.size, details.hasQueryMap)
 
         val resolvedUrl = resolveUrl(ep.baseUrl, ep.path)
-        val baseUrlLine = if (ep.baseUrl != null) {
-            val source = if (details.baseUrlFromConfig) "config" else "inferred"
-            "Base URL: ${ep.baseUrl.trimEnd('/')}  ($source)"
-        } else {
-            "Base URL: {{host}}  (unresolved)"
+        val baseUrlValue = ep.baseUrl?.trimEnd('/') ?: "{{host}}"
+        val baseUrlSource = when {
+            ep.baseUrl == null -> "unresolved"
+            details.baseUrlFromConfig -> "config"
+            else -> "inferred"
         }
 
         val serviceSimpleName = ep.serviceFqn.substringAfterLast('.')
@@ -42,71 +42,75 @@ internal object MarkdownDocRenderer {
         return buildString {
             appendLine(buildHeaderLine(method, pathForDisplay, authHint, paramsBadge, confidence))
             appendLine()
-            appendLine("Resolved URL: $resolvedUrl")
-            appendLine(baseUrlLine)
-            appendLine("Source: [$sourceLabel (open)]($functionLink)")
+            appendLine("- **Resolved URL:** `$resolvedUrl`")
+            appendLine("- **Base URL:** `$baseUrlValue` ($baseUrlSource)")
+            appendLine("- **Source:** [$sourceLabel (open)]($functionLink)")
             appendLine()
 
-            appendLine("Types")
+            appendLine("## Types")
             appendLine("- Request: ${renderType(ep.requestType)}")
             appendLine("- Response: ${renderType(ep.responseType, fallback = "Unknown")}")
 
             if (pathParams.isNotEmpty()) {
                 appendLine()
-                appendLine("Path Parameters")
+                appendLine("## Path Parameters")
                 pathParams.forEach { name ->
                     appendLine("- `$name`")
                 }
             }
 
-            if (queryParams.isNotEmpty()) {
+            if (queryParams.isNotEmpty() || details.hasQueryMap) {
                 appendLine()
-                appendLine("Query Parameters")
-                appendLine("| name | type | required | default |")
-                appendLine("|------|------|----------|---------|")
+                appendLine("## Query Parameters")
                 queryParams.forEach { name ->
-                    appendLine("| $name | ? | ? | ? |")
+                    appendLine("- `$name`")
+                }
+                if (details.hasQueryMap) {
+                    appendLine("- Dynamic entries via `@QueryMap`")
                 }
             }
 
             if (details.headerParams.isNotEmpty() || details.hasHeaderMap) {
                 appendLine()
-                appendLine("Header Parameters")
+                appendLine("## Header Parameters")
                 details.headerParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
                 if (details.hasHeaderMap) {
-                    appendLine("- `@HeaderMap` entries")
+                    appendLine("- Dynamic entries via `@HeaderMap`")
                 }
             }
 
             if (details.fieldParams.isNotEmpty() || details.hasFieldMap) {
                 appendLine()
-                appendLine("Form Fields")
+                appendLine("## Form Fields")
                 details.fieldParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
                 if (details.hasFieldMap) {
-                    appendLine("- `@FieldMap` entries")
+                    appendLine("- Dynamic entries via `@FieldMap`")
                 }
             }
 
             if (details.partParams.isNotEmpty() || details.hasPartMap) {
                 appendLine()
-                appendLine("Multipart Parts")
+                appendLine("## Multipart Parts")
                 details.partParams.distinct().forEach { name ->
                     appendLine("- `$name`")
                 }
                 if (details.hasPartMap) {
-                    appendLine("- `@PartMap` entries")
+                    appendLine("- Dynamic entries via `@PartMap`")
                 }
             }
 
             appendLine()
-            appendLine("HTTP Client (.http)")
+            appendLine("## HTTP Client (.http)")
             appendLine("```http")
             appendLine("### $serviceSimpleName.${ep.functionName}")
             appendLine("$method ${buildHttpClientUrl(ep.path, queryParams)}")
+            if (details.hasQueryMap) {
+                appendLine("# Add @QueryMap entries to the URL as needed.")
+            }
             appendLine("Accept: application/json")
             if (details.authRequirement == EndpointDocDetails.AuthRequirement.REQUIRED) {
                 appendLine("Authorization: Bearer {{token}}")
@@ -114,7 +118,7 @@ internal object MarkdownDocRenderer {
             appendLine("```")
 
             appendLine()
-            appendLine("Notes")
+            appendLine("## Notes")
             appendLine("- Authorization header is included only when required from Retrofit annotations/headers.")
             if (ep.baseUrl == null) {
                 appendLine("- `{{host}}` is unresolved; define it in endpointdroid.yaml or http-client.env.json.")
@@ -174,10 +178,15 @@ internal object MarkdownDocRenderer {
     /**
      * Builds optional parameter summary badge text.
      */
-    private fun paramsBadge(pathCount: Int, queryCount: Int): String? {
+    private fun paramsBadge(pathCount: Int, queryCount: Int, hasQueryMap: Boolean): String? {
         val parts = mutableListOf<String>()
         if (pathCount > 0) parts += "path($pathCount)"
-        if (queryCount > 0) parts += "query($queryCount)"
+        if (queryCount > 0) {
+            parts += "query($queryCount)"
+        } else if (hasQueryMap) {
+            // QueryMap means query params exist but names are runtime-defined.
+            parts += "query(*)"
+        }
         return if (parts.isEmpty()) null else parts.joinToString(", ")
     }
 
