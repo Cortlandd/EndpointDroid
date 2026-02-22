@@ -306,10 +306,12 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
      */
     private fun updateMethodFilterAvailability(endpoints: List<Endpoint>) {
         val presentMethods = endpoints.map { it.httpMethod.uppercase() }.toSet()
+        val hadSelectedMethods = selectedMethods().isNotEmpty()
         methodFilterBoxes.forEach { (method, box) ->
             box.isEnabled = presentMethods.contains(method)
-            if (!box.isEnabled) box.isSelected = false
-            if (box.isEnabled && selectedMethods().isEmpty()) {
+            // Keep checkbox state when a method is temporarily unavailable (e.g. switching tabs).
+            // This avoids collapsing selections to a single method when coming back to scanned endpoints.
+            if (box.isEnabled && !hadSelectedMethods) {
                 box.isSelected = true
             }
         }
