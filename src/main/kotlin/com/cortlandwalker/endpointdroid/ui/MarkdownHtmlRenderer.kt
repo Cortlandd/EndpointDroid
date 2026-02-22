@@ -30,7 +30,8 @@ internal object MarkdownHtmlRenderer {
         @Suppress("UNUSED_VARIABLE")
         val ignore = project to virtualFile
 
-        return "<html><body>${normalizeTablesForSwing(addTableBorders(renderedBody))}</body></html>"
+        val swingSafeBody = boxCodeBlocks(normalizeTablesForSwing(addTableBorders(renderedBody)))
+        return "<html><body>$swingSafeBody</body></html>"
     }
 
     /**
@@ -53,7 +54,7 @@ internal object MarkdownHtmlRenderer {
                 if (attrs.contains("border=", ignoreCase = true)) {
                     match.value
                 } else {
-                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
+                    "<table$attrs border=\"1\" bordercolor=\"#7f848e\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
                 }
             }
     }
@@ -71,13 +72,39 @@ internal object MarkdownHtmlRenderer {
         val withThBorders = Regex("<th(\\s[^>]*)?>")
             .replace(withoutSections) { match ->
                 val attrs = match.groupValues.getOrElse(1) { "" }
-                if (attrs.contains("border=", ignoreCase = true)) match.value else "<th$attrs border=\"1\">"
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<th$attrs border=\"1\" bordercolor=\"#7f848e\" align=\"left\" bgcolor=\"#2f333d\">"
+                }
             }
 
         return Regex("<td(\\s[^>]*)?>")
             .replace(withThBorders) { match ->
                 val attrs = match.groupValues.getOrElse(1) { "" }
-                if (attrs.contains("border=", ignoreCase = true)) match.value else "<td$attrs border=\"1\">"
+                if (attrs.contains("border=", ignoreCase = true)) {
+                    match.value
+                } else {
+                    "<td$attrs border=\"1\" bordercolor=\"#7f848e\" align=\"left\">"
+                }
             }
+    }
+
+    /**
+     * Wraps fenced-code output in a bordered container so code blocks are visually distinct.
+     */
+    private fun boxCodeBlocks(html: String): String {
+        val codeBlockRegex = Regex("(?is)<pre><code[^>]*>(.*?)</code></pre>")
+        return codeBlockRegex.replace(html) { match ->
+            val codeContent = match.groupValues[1]
+            buildString {
+                append("<table border=\"1\" bordercolor=\"#7f848e\" cellspacing=\"0\" cellpadding=\"6\" width=\"100%\">")
+                append("<tr><td bgcolor=\"#2b2f38\">")
+                append("<pre><font face=\"monospaced\">")
+                append(codeContent)
+                append("</font></pre>")
+                append("</td></tr></table>")
+            }
+        }
     }
 }
