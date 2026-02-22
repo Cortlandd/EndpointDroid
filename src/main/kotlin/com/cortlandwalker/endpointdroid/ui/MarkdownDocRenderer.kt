@@ -76,7 +76,7 @@ internal object MarkdownDocRenderer {
                 if (queryParams.isNotEmpty()) {
                     appendLine()
                     appendLine(
-                        renderHtmlTable(
+                        renderMarkdownTable(
                             headers = listOf("name", "type", "required", "default"),
                             rows = queryParams.map { name ->
                                 // Query metadata shape is not fully modeled yet, so unknown columns stay explicit.
@@ -97,7 +97,7 @@ internal object MarkdownDocRenderer {
                 if (headerRows.isNotEmpty()) {
                     appendLine()
                     appendLine(
-                        renderHtmlTable(
+                        renderMarkdownTable(
                             headers = listOf("name", "source", "value"),
                             rows = headerRows
                         )
@@ -213,29 +213,26 @@ internal object MarkdownDocRenderer {
     }
 
     /**
-     * Renders HTML tables so Swing/JEditorPane shows explicit cell borders reliably.
+     * Renders markdown table text for parameter sections.
      */
-    private fun renderHtmlTable(headers: List<String>, rows: List<List<String>>): String {
-        val headerCells = headers.joinToString("") { title ->
-            "<th>${escapeHtml(title)}</th>"
-        }
-        val bodyRows = rows.joinToString("") { row ->
-            val cells = row.joinToString("") { value -> "<td>${escapeHtml(value)}</td>" }
-            "<tr>$cells</tr>"
+    private fun renderMarkdownTable(headers: List<String>, rows: List<List<String>>): String {
+        val normalizedRows = rows.map { row ->
+            headers.indices.map { index ->
+                val value = row.getOrNull(index).orEmpty()
+                escapeMarkdownCell(value)
+            }
         }
         return buildString {
-            append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">")
-            append("<tr>$headerCells</tr>")
-            append(bodyRows)
-            append("</table>")
-        }
+            appendLine("| ${headers.joinToString(" | ") { escapeMarkdownCell(it) }} |")
+            appendLine("| ${headers.joinToString(" | ") { "---" }} |")
+            normalizedRows.forEach { row ->
+                appendLine("| ${row.joinToString(" | ")} |")
+            }
+        }.trimEnd()
     }
 
-    private fun escapeHtml(value: String): String {
-        return value
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+    private fun escapeMarkdownCell(value: String): String {
+        return value.replace("|", "\\|")
     }
 
     /**
