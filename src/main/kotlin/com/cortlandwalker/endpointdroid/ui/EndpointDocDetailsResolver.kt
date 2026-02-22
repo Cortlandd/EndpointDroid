@@ -8,8 +8,10 @@ import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.util.PsiModificationTracker
 import kotlin.io.path.Path
 import kotlin.io.path.invariantSeparatorsPathString
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Resolves method-level Retrofit metadata for a selected endpoint.
@@ -19,12 +21,25 @@ import kotlin.io.path.invariantSeparatorsPathString
 internal object EndpointDocDetailsResolver {
     private const val RETROFIT_PREFIX = "retrofit2.http."
     private const val AUTHORIZATION_HEADER = "Authorization"
+    private const val MAX_CACHE_ENTRIES = 2048
+    private val detailsCache = ConcurrentHashMap<DetailsCacheKey, EndpointDocDetails>()
 
     /**
      * Resolves rich details for an endpoint's source method.
      */
     fun resolve(project: Project, endpoint: Endpoint): EndpointDocDetails {
-        val method = findEndpointMethod(project, endpoint) ?: return EndpointDocDetails.empty()
+        val cacheKey = DetailsCacheKey(
+            projectKey = project.basePath ?: project.locationHash,
+            psiModificationCount = PsiModificationTracker.getInstance(project).modificationCount,
+            httpMethod = endpoint.httpMethod,
+            path = endpoint.path,
+            serviceFqn = endpoint.serviceFqn,
+            functionName = endpoint.functionName
+        )
+        detailsCache[cacheKey]?.let { return it }
+
+        val method = findEndpointMethod(project, endpoint)
+            ?: return cacheAndReturn(cacheKey, EndpointDocDetails.empty())
         val source = resolveSourceLocation(project, method)
 
         val pathParams = mutableListOf<String>()
@@ -70,7 +85,7 @@ internal object EndpointDocDetailsResolver {
             else -> EndpointDocDetails.AuthRequirement.NONE
         }
 
-        return EndpointDocDetails(
+        val resolved = EndpointDocDetails(
             sourceFile = source.file,
             sourceLine = source.line,
             pathParams = pathParams.distinct(),
@@ -87,6 +102,19 @@ internal object EndpointDocDetailsResolver {
             staticHeaders = staticHeaders.distinct(),
             authRequirement = authRequirement
         )
+
+        return cacheAndReturn(cacheKey, resolved)
+    }
+
+    /**
+     * Stores a details entry in the bounded cache and returns it.
+     */
+    private fun cacheAndReturn(key: DetailsCacheKey, details: EndpointDocDetails): EndpointDocDetails {
+        if (detailsCache.size >= MAX_CACHE_ENTRIES) {
+            detailsCache.clear()
+        }
+        detailsCache[key] = details
+        return details
     }
 
     /**
@@ -213,6 +241,14 @@ internal object EndpointDocDetailsResolver {
 
     private data class SourceLocation(val file: String?, val line: Int?)
     private data class HttpSignature(val method: String, val path: String)
+    private data class DetailsCacheKey(
+        val projectKey: String,
+        val psiModificationCount: Long,
+        val httpMethod: String,
+        val path: String,
+        val serviceFqn: String,
+        val functionName: String
+    )
 
     private val retrofitHttpAnnotationNames = setOf(
         "GET",
