@@ -57,6 +57,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     private val endpointService = EndpointService.getInstance(project)
+    private val refreshRequestId = AtomicLong(0)
     private val detailsRenderRequestId = AtomicLong(0)
 
     init {
@@ -119,12 +120,13 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
      *
      * @param selectFirst if true, selects the first endpoint after refresh (useful on initial load).
      */
-    private fun refreshFromService(selectFirst: Boolean) {
+    private fun refreshFromService(selectFirst: Boolean, requestId: Long) {
         val previousSelection = endpointList.selectedValue
 
         val refreshPromise = endpointService.refreshAsync()
         refreshPromise.onSuccess { endpoints ->
             ApplicationManager.getApplication().invokeLater {
+                if (refreshRequestId.get() != requestId) return@invokeLater
                 endpointList.setListData(endpoints.toTypedArray())
 
                 if (endpoints.isEmpty()) {
@@ -153,6 +155,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
         refreshPromise.onError { error ->
             ApplicationManager.getApplication().invokeLater {
+                if (refreshRequestId.get() != requestId) return@invokeLater
                 endpointList.setListData(emptyArray())
                 showDetailsMessage("$SCAN_FAILED_PREFIX ${error.message ?: error::class.java.simpleName}")
             }
@@ -166,6 +169,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
      * - If already smart, queue refresh immediately while still showing in-window status.
      */
     private fun scheduleRefresh(selectFirst: Boolean) {
+        val requestId = refreshRequestId.incrementAndGet()
         val dumbService = DumbService.getInstance(project)
         if (dumbService.isDumb) {
             showDetailsMessage(INDEXING_MESSAGE)
@@ -175,8 +179,9 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
 
         dumbService.smartInvokeLater {
             if (project.isDisposed) return@smartInvokeLater
+            if (refreshRequestId.get() != requestId) return@smartInvokeLater
             showDetailsMessage(REFRESHING_MESSAGE)
-            refreshFromService(selectFirst)
+            refreshFromService(selectFirst, requestId)
         }
     }
 
