@@ -21,9 +21,6 @@ dependencies {
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Add plugin dependencies for compilation here:
-
-
-        bundledPlugin("org.jetbrains.kotlin")
     }
 }
 

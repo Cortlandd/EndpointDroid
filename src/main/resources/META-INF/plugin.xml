@@ -20,12 +20,15 @@
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
 
-    <depends>org.jetbrains.kotlin</depends>
-    <resource-bundle>messages.MyMessageBundle</resource-bundle>
+    <depends>com.intellij.modules.platform</depends>
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="MyToolWindow" factoryClass="com.cortlandwalker.endpointdroid.MyToolWindowFactory"
-                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
+        <toolWindow
+            id="EndpointDroid"
+            factoryClass="com.cortlandwalker.endpointdroid.ui.EndpointDroidToolWindowFactory"
+            anchor="right"
+            icon="/icons/endpointdroid.svg"
+            secondary="false"/>
     </extensions>
 </idea-plugin>
