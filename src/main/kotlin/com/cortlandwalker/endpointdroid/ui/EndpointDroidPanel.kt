@@ -149,6 +149,7 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         sourceTabs.addChangeListener {
             val source = selectedSourceTab()
             properties.setValue(SELECTED_SOURCE_TAB_KEY, source.storageValue)
+            // Tab switching is intentionally UI-only: no scan/import job should start here.
             updateMethodFilterAvailability(endpointsFor(source))
             applyFiltersAndGrouping(selectFirst = false, preferredSelection = null)
         }
@@ -916,8 +917,10 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val REFRESHING_MESSAGE = "Refreshing endpoints..."
         const val LOADING_DETAILS_MESSAGE = "Loading endpoint details..."
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
-        const val NO_POSTMAN_ENDPOINTS_MESSAGE = "No Postman endpoints imported yet."
-        const val NO_INSOMNIA_ENDPOINTS_MESSAGE = "No Insomnia endpoints imported yet."
+        const val NO_POSTMAN_ENDPOINTS_MESSAGE =
+            "Postman tab is empty.\n\nImport a Postman collection to populate endpoints."
+        const val NO_INSOMNIA_ENDPOINTS_MESSAGE =
+            "Insomnia tab is empty.\n\nImport an Insomnia export to populate endpoints."
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
         const val SELECTED_SOURCE_TAB_KEY = "endpointdroid.selected.source.tab"
