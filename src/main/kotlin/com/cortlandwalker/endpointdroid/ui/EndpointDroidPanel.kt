@@ -105,6 +105,15 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
                     scheduleRefresh(selectFirst = false)
                 }
             })
+            add(object : DumbAwareAction(
+                "Import Collection",
+                "Import a Postman or Insomnia collection (coming soon)",
+                null
+            ) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    showDetailsMessage(IMPORT_COLLECTION_PLACEHOLDER_MESSAGE)
+                }
+            })
         }
 
         val toolbar = ActionManager.getInstance()
@@ -708,6 +717,8 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()),
         const val NO_ENDPOINTS_MESSAGE = "No endpoints found."
         const val NO_MATCHING_ENDPOINTS_MESSAGE = "No endpoints match the current filters."
         const val SELECT_ENDPOINT_MESSAGE = "Select an endpoint to view details."
+        const val IMPORT_COLLECTION_PLACEHOLDER_MESSAGE =
+            "Import collection support is coming soon.\n\nPlanned: Postman + Insomnia import."
         const val SCAN_FAILED_PREFIX = "Endpoint scan failed:"
         const val DETAILS_FAILED_PREFIX = "Endpoint details failed:"
         val METHOD_OPTIONS = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "HTTP")
