@@ -24,7 +24,8 @@ dependencies {
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // If you use Android-specific APIs, you may need the Android plugin:
-        bundledPlugin("org.jetbrains.android")
+        bundledPlugins(listOf("org.jetbrains.android", "com.intellij.java", "org.intellij.plugins.markdown"))
+
     }
 }
 

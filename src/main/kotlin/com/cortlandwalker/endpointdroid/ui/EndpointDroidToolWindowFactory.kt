@@ -15,6 +15,7 @@ class EndpointDroidToolWindowFactory : ToolWindowFactory {
         toolWindow.setAnchor(ToolWindowAnchor.BOTTOM, null)
         val panel = EndpointDroidPanel(project)
         val content = ContentFactory.getInstance().createContent(panel, null, false)
+        content.setDisposer(panel)
         toolWindow.contentManager.addContent(content)
     }
 }

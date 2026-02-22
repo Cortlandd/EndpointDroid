@@ -24,6 +24,7 @@
     <depends>com.intellij.modules.lang</depends>
     <depends>com.intellij.modules.androidstudio</depends>
     <depends>com.intellij.modules.java</depends>
+    <depends>org.intellij.plugins.markdown</depends>
 
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->

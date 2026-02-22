@@ -1,88 +1,35 @@
 package com.cortlandwalker.endpointdroid.ui
 
-import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
-import org.intellij.markdown.html.HtmlGenerator
-import org.intellij.markdown.parser.MarkdownParser
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
+import org.intellij.plugins.markdown.ui.preview.html.MarkdownUtil
 
 /**
- * Markdown renderer for EndpointDroid details.
+ * Converts markdown text into preview HTML using JetBrains Markdown plugin internals.
  *
- * Uses the IntelliJ/JetBrains markdown parser so output behavior stays aligned
- * with JetBrains tooling instead of custom markdown rules.
+ * The renderer intentionally accepts markdown as the source of truth; HTML is only
+ * generated at the final display step by built-in Markdown tooling.
  */
 internal object MarkdownHtmlRenderer {
 
     /**
-     * Converts markdown to HTML and wraps it in a simple document shell.
-     * Falls back to plain escaped text when markdown conversion fails.
+     * Generates preview HTML for markdown text using the active IDE markdown implementation.
      */
-    fun toHtml(markdown: String): String {
-        val renderedBody = runCatching {
-            val flavour = GFMFlavourDescriptor()
-            val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
-            HtmlGenerator(markdown, tree, flavour).generateHtml()
-        }.getOrElse {
+    fun toHtml(project: Project, virtualFile: VirtualFile, markdown: String): String {
+        return runCatching {
+            MarkdownUtil.generateMarkdownHtml(virtualFile, markdown, project)
+        }.getOrElse { _ ->
             "<pre>${escapeHtml(markdown)}</pre>"
         }
-        val bodyWithTables = normalizeTablesForSwing(addTableBorders(renderedBody))
-
-        // Avoid CSS to prevent Swing HTML parser edge-case crashes.
-        return "<html><body>$bodyWithTables</body></html>"
     }
 
     /**
-     * Escapes text for safe HTML fallback rendering.
+     * Escapes plain text fallback content into safe HTML.
      */
     private fun escapeHtml(text: String): String {
         return text
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
-    }
-
-    /**
-     * Adds legacy HTML table border attributes so markdown tables remain readable in Swing HTML.
-     */
-    private fun addTableBorders(html: String): String {
-        return Regex("<table(\\s[^>]*)?>")
-            .replace(html) { match ->
-                val attrs = match.groupValues.getOrElse(1) { "" }
-                if (attrs.contains("border=", ignoreCase = true)) {
-                    match.value
-                } else {
-                    "<table$attrs border=\"1\" cellspacing=\"0\" cellpadding=\"4\" rules=\"all\" frame=\"box\">"
-                }
-            }
-    }
-
-    /**
-     * Normalizes table markup to tags Swing HTML parser renders consistently.
-     */
-    private fun normalizeTablesForSwing(html: String): String {
-        val withoutTableSections = html
-            .replace("<thead>", "")
-            .replace("</thead>", "")
-            .replace("<tbody>", "")
-            .replace("</tbody>", "")
-
-        val withHeaderCellBorders = Regex("<th(\\s[^>]*)?>")
-            .replace(withoutTableSections) { match ->
-                val attrs = match.groupValues.getOrElse(1) { "" }
-                if (attrs.contains("border=", ignoreCase = true)) {
-                    match.value
-                } else {
-                    "<th$attrs border=\"1\">"
-                }
-            }
-
-        return Regex("<td(\\s[^>]*)?>")
-            .replace(withHeaderCellBorders) { match ->
-                val attrs = match.groupValues.getOrElse(1) { "" }
-                if (attrs.contains("border=", ignoreCase = true)) {
-                    match.value
-                } else {
-                    "<td$attrs border=\"1\">"
-                }
-            }
     }
 }

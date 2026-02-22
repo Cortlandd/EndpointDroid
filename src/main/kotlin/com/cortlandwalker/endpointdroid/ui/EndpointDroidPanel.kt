@@ -8,6 +8,7 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbService
@@ -18,16 +19,21 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.PsiShortNamesCache
+import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
+import javax.swing.JComponent
 import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ListSelectionModel
 import javax.swing.event.HyperlinkEvent
 import java.util.concurrent.atomic.AtomicLong
+import org.intellij.plugins.markdown.lang.MarkdownFileType
+import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanel
+import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
 
 /**
  * Main UI for the EndpointDroid tool window.
@@ -39,24 +45,27 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * The panel does NOT own the endpoint data; it delegates to [EndpointService].
  */
-class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) {
+class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val endpointList = JBList<Endpoint>().apply {
         cellRenderer = EndpointListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
         emptyText.text = EMPTY_LIST_MESSAGE
     }
-    private val detailsPane = JEditorPane("text/html", "").apply {
+    private val detailsVirtualFile = LightVirtualFile("EndpointDroidDetails.md", MarkdownFileType.INSTANCE, "")
+    private val markdownPreviewPanel = createMarkdownPreviewPanel(project, detailsVirtualFile)
+    private val detailsPaneFallback = JEditorPane("text/html", "").apply {
         isEditable = false
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
         foreground = UIUtil.getLabelForeground()
         background = UIUtil.getPanelBackground()
         font = UIUtil.getLabelFont()
     }
+    private val detailsView: JComponent = markdownPreviewPanel?.component ?: JBScrollPane(detailsPaneFallback)
     private val splitPane = JSplitPane(
         JSplitPane.HORIZONTAL_SPLIT,
         JBScrollPane(endpointList),
-        JBScrollPane(detailsPane)
+        detailsView
     ).apply {
         resizeWeight = DEFAULT_SPLIT_WEIGHT
     }
@@ -111,10 +120,12 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
                 }
             }
         }
-        detailsPane.addHyperlinkListener { event ->
-            if (event.eventType != HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
-            val link = event.url?.toString() ?: event.description ?: return@addHyperlinkListener
-            handleDetailsHyperlink(link)
+        if (markdownPreviewPanel == null) {
+            detailsPaneFallback.addHyperlinkListener { event ->
+                if (event.eventType != HyperlinkEvent.EventType.ACTIVATED) return@addHyperlinkListener
+                val link = event.url?.toString() ?: event.description ?: return@addHyperlinkListener
+                handleDetailsHyperlink(link)
+            }
         }
 
         scheduleRefresh(selectFirst = true)
@@ -198,8 +209,17 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
      * Renders markdown in the details pane.
      */
     private fun renderMarkdownDetails(markdown: String) {
-        detailsPane.text = MarkdownHtmlRenderer.toHtml(markdown)
-        detailsPane.caretPosition = 0
+        detailsVirtualFile.setContent(this, markdown, false)
+        val html = MarkdownHtmlRenderer.toHtml(project, detailsVirtualFile, markdown)
+
+        val previewPanel = markdownPreviewPanel
+        if (previewPanel != null) {
+            previewPanel.setHtml(html, 0, detailsVirtualFile)
+            return
+        }
+
+        detailsPaneFallback.text = html
+        detailsPaneFallback.caretPosition = 0
     }
 
     /**
@@ -326,6 +346,18 @@ class EndpointDroidPanel(private val project: Project) : JPanel(BorderLayout()) 
      */
     private fun showDetailsMessage(message: String) {
         renderMarkdownDetails(message)
+    }
+
+    /**
+     * Creates a JetBrains Markdown preview panel, falling back to Swing HTML when unavailable.
+     */
+    private fun createMarkdownPreviewPanel(project: Project, markdownFile: LightVirtualFile): MarkdownHtmlPanel? {
+        val provider = MarkdownHtmlPanelProvider.getAvailableProviders().firstOrNull() ?: return null
+        return runCatching { provider.createHtmlPanel(project, markdownFile) }.getOrNull()
+    }
+
+    override fun dispose() {
+        markdownPreviewPanel?.dispose()
     }
 
     private companion object {
