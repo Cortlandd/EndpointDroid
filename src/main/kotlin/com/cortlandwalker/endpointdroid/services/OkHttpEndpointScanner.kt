@@ -4,13 +4,24 @@ import com.cortlandwalker.endpointdroid.model.Endpoint
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.PsiManager
+import org.jetbrains.uast.UCallExpression
+import org.jetbrains.uast.UFile
+import org.jetbrains.uast.UMethod
+import org.jetbrains.uast.toUElementOfType
+import org.jetbrains.uast.visitor.AbstractUastVisitor
 import java.net.URI
 
 /**
- * Scans project source for OkHttp request-builder call sites and extracts endpoint metadata.
+ * Scans project source for OkHttp endpoint patterns.
  *
- * This scanner is intentionally heuristic-based so it can discover endpoints in both Kotlin and
- * Java source without depending on language-specific PSI plugins.
+ * Strategy:
+ * 1. UAST-first extraction for direct OkHttp usage (`Request.Builder`, `url`, HTTP verb calls).
+ * 2. Generic text heuristics as fallback for wrapper abstractions operating on `Request.Builder`.
+ *
+ * This keeps detection broad (custom wrappers + standard usage) without tying behavior
+ * to project-specific base classes.
  */
 internal object OkHttpEndpointScanner {
 
@@ -31,15 +42,16 @@ internal object OkHttpEndpointScanner {
     private val urlCallRegex = Regex("""\.url\s*\(\s*([^)]+?)\s*\)""")
     private val methodOverrideRegex = Regex("""\.method\s*\(\s*"([A-Za-z]+)"\s*,\s*([^)]+)\)""")
     private val verbCallRegex = Regex("""\.(get|post|put|patch|delete|head)\s*\(""", RegexOption.IGNORE_CASE)
-    private val okHttpMethodBaseClassRegex = Regex(
-        """class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([\s\S]*?)\)\s*:\s*OkHttpMethodBase\s*\(([^)]*)\)\s*\{([\s\S]*?)\n\}"""
+
+    private val kotlinBuilderMethodRegex = Regex(
+        """fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*Request\.Builder[^)]*)\)\s*\{([\s\S]{0,1200}?)\n\s*\}"""
     )
-    private val applyTypeRegex = Regex(
-        """override\s+fun\s+applyType\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*Request\.Builder\s*\)\s*\{([\s\S]*?)\}"""
+    private val javaBuilderMethodRegex = Regex(
+        """[A-Za-z_][A-Za-z0-9_<>,.?\[\]\s]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*Request\.Builder[^)]*)\)\s*\{([\s\S]{0,1200}?)\n\s*\}"""
     )
-    private val constructorParamRegex = Regex(
-        """(?:val|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^=,\n)]+)"""
-    )
+    private val classHeaderRegex = Regex("""class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)""")
+    private val constructorParamRegex = Regex("""(?:val|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^=,\n)]+)""")
+
     private val kotlinStringConstantRegex =
         Regex("(?:const\\s+)?val\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*\"([^\"]+)\"")
     private val javaStringConstantRegex =
@@ -58,40 +70,35 @@ internal object OkHttpEndpointScanner {
             if (!isSupportedSourceFile(file.name)) return@iterateContent true
 
             val text = runCatching { VfsUtilCore.loadText(file) }.getOrNull() ?: return@iterateContent true
-            if (!text.contains("Request.Builder")) return@iterateContent true
+            if (!looksRelevantToOkHttp(text)) return@iterateContent true
 
             val packageName = packageRegex.find(text)?.groupValues?.get(1).orEmpty()
             val constants = collectStringConstants(text)
             val contextIndex = SourceContextIndex.build(file.name, packageName, text)
 
-            requestBuilderBlockRegex.findAll(text).forEach { blockMatch ->
-                val block = blockMatch.value
-                val urlExpression = urlCallRegex.find(block)?.groupValues?.get(1)?.trim() ?: return@forEach
-                val resolvedUrl = resolveUrlExpression(urlExpression, constants, baseUrlFallback)
-                val context = contextIndex.contextForOffset(blockMatch.range.first)
-                val httpMethod = extractHttpMethod(block)
-                val requestType = inferRequestType(block)
-                val responseType = normalizeDeclaredType(context.declaredResponseType)
+            scanWithUast(
+                project = project,
+                file = file,
+                packageName = packageName,
+                constants = constants,
+                baseUrlFallback = baseUrlFallback,
+                seenKeys = seenKeys,
+                results = results
+            )
 
-                val endpoint = Endpoint(
-                    httpMethod = httpMethod,
-                    path = resolvedUrl.path,
-                    serviceFqn = context.serviceFqn,
-                    functionName = context.functionName,
-                    requestType = requestType,
-                    responseType = responseType,
-                    baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
-                )
+            scanInlineBuilderChains(
+                text = text,
+                constants = constants,
+                contextIndex = contextIndex,
+                baseUrlFallback = baseUrlFallback,
+                seenKeys = seenKeys,
+                results = results
+            )
 
-                val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
-                if (seenKeys.add(key)) {
-                    results += endpoint
-                }
-            }
-
-            scanOkHttpMethodBaseSubclasses(
+            scanBuilderWrapperMethods(
                 text = text,
                 packageName = packageName,
+                contextIndex = contextIndex,
                 constants = constants,
                 baseUrlFallback = baseUrlFallback,
                 seenKeys = seenKeys,
@@ -104,24 +111,237 @@ internal object OkHttpEndpointScanner {
     }
 
     /**
-     * Determines HTTP method from builder chain calls.
+     * UAST-first pass for direct OkHttp usage.
      */
-    private fun extractHttpMethod(blockText: String): String {
+    private fun scanWithUast(
+        project: Project,
+        file: VirtualFile,
+        packageName: String,
+        constants: Map<String, String>,
+        baseUrlFallback: String?,
+        seenKeys: MutableSet<String>,
+        results: MutableList<Endpoint>
+    ) {
+        val psiFile = PsiManager.getInstance(project).findFile(file) ?: return
+        val uFile = psiFile.toUElementOfType<UFile>() ?: return
+        val fileBaseName = file.name.substringBeforeLast('.')
+
+        uFile.accept(object : AbstractUastVisitor() {
+            override fun visitMethod(node: UMethod): Boolean {
+                val sourceText = node.sourcePsi?.text ?: return super.visitMethod(node)
+                val signals = MethodSignals()
+
+                node.uastBody?.accept(object : AbstractUastVisitor() {
+                    override fun visitCallExpression(call: UCallExpression): Boolean {
+                        collectOkHttpCallSignals(call, signals)
+                        return super.visitCallExpression(call)
+                    }
+                })
+
+                val httpMethod = signals.httpMethod ?: extractHttpMethod(sourceText)
+                if (httpMethod == null) return super.visitMethod(node)
+                if (!signals.sawOkHttpBuilderCall && !sourceText.contains("Request.Builder")) {
+                    return super.visitMethod(node)
+                }
+
+                val resolvedUrl = signals.urlExpression
+                    ?.let { resolveUrlExpression(it, constants, baseUrlFallback) }
+                    ?: inferUrlFromParameters(
+                        signatureText = node.uastParameters.joinToString(",") { "${it.name}:${it.type.presentableText}" },
+                        fallbackText = sourceText,
+                        baseUrlFallback = baseUrlFallback
+                    )
+                    ?: return super.visitMethod(node)
+
+                val psiMethod = node.javaPsi
+                val serviceFqn = psiMethod.containingClass?.qualifiedName
+                    ?: if (packageName.isBlank()) fileBaseName else "$packageName.$fileBaseName"
+                val functionName = psiMethod.name.ifBlank { node.name }
+
+                val endpoint = Endpoint(
+                    httpMethod = httpMethod,
+                    path = resolvedUrl.path,
+                    serviceFqn = serviceFqn,
+                    functionName = functionName,
+                    requestType = signals.requestType ?: inferRequestType(sourceText),
+                    responseType = normalizeDeclaredType(psiMethod.returnType?.presentableText),
+                    baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
+                )
+                addUniqueEndpoint(endpoint, seenKeys, results)
+                return super.visitMethod(node)
+            }
+        })
+    }
+
+    /**
+     * Collects direct `Request.Builder().url(...).verb(...).build()` patterns.
+     */
+    private fun scanInlineBuilderChains(
+        text: String,
+        constants: Map<String, String>,
+        contextIndex: SourceContextIndex,
+        baseUrlFallback: String?,
+        seenKeys: MutableSet<String>,
+        results: MutableList<Endpoint>
+    ) {
+        requestBuilderBlockRegex.findAll(text).forEach { blockMatch ->
+            val block = blockMatch.value
+            val urlExpression = urlCallRegex.find(block)?.groupValues?.get(1)?.trim() ?: return@forEach
+            val resolvedUrl = resolveUrlExpression(urlExpression, constants, baseUrlFallback)
+            val context = contextIndex.contextForOffset(blockMatch.range.first)
+
+            val endpoint = Endpoint(
+                httpMethod = extractHttpMethod(block) ?: return@forEach,
+                path = resolvedUrl.path,
+                serviceFqn = context.serviceFqn,
+                functionName = context.functionName,
+                requestType = inferRequestType(block),
+                responseType = normalizeDeclaredType(context.declaredResponseType),
+                baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
+            )
+            addUniqueEndpoint(endpoint, seenKeys, results)
+        }
+    }
+
+    /**
+     * Generic wrapper fallback for methods operating on `Request.Builder`.
+     */
+    private fun scanBuilderWrapperMethods(
+        text: String,
+        packageName: String,
+        contextIndex: SourceContextIndex,
+        constants: Map<String, String>,
+        baseUrlFallback: String?,
+        seenKeys: MutableSet<String>,
+        results: MutableList<Endpoint>
+    ) {
+        val classHeaders = classHeaderRegex.findAll(text)
+            .map { match ->
+                ClassHeader(
+                    offset = match.range.first,
+                    className = match.groupValues[1].trim(),
+                    constructorParams = match.groupValues[2]
+                )
+            }
+            .toList()
+
+        fun processMatch(methodName: String, signatureParams: String, methodBody: String, offset: Int) {
+            val httpMethod = extractHttpMethod(methodBody) ?: return
+            val urlExpression = urlCallRegex.find(methodBody)?.groupValues?.get(1)?.trim()
+
+            val classHeader = classHeaders.lastOrNull { it.offset <= offset }
+            val resolvedUrl = if (urlExpression != null) {
+                resolveUrlExpression(urlExpression, constants, baseUrlFallback)
+            } else {
+                inferUrlFromParameters(
+                    signatureText = signatureParams,
+                    fallbackText = classHeader?.constructorParams.orEmpty(),
+                    baseUrlFallback = baseUrlFallback
+                ) ?: return
+            }
+
+            val serviceFqn = classHeader?.let {
+                if (packageName.isBlank()) it.className else "$packageName.${it.className}"
+            } ?: contextIndex.contextForOffset(offset).serviceFqn
+
+            val requestType = inferRequestType(methodBody)
+                ?: extractRequestBodyType(signatureParams)
+                ?: classHeader?.constructorParams?.let(::extractRequestBodyType)
+
+            val endpoint = Endpoint(
+                httpMethod = httpMethod,
+                path = resolvedUrl.path,
+                serviceFqn = serviceFqn,
+                functionName = methodName,
+                requestType = requestType,
+                responseType = null,
+                baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
+            )
+            addUniqueEndpoint(endpoint, seenKeys, results)
+        }
+
+        kotlinBuilderMethodRegex.findAll(text).forEach { match ->
+            processMatch(
+                methodName = match.groupValues[1].trim(),
+                signatureParams = match.groupValues[2],
+                methodBody = match.groupValues[3],
+                offset = match.range.first
+            )
+        }
+
+        javaBuilderMethodRegex.findAll(text).forEach { match ->
+            processMatch(
+                methodName = match.groupValues[1].trim(),
+                signatureParams = match.groupValues[2],
+                methodBody = match.groupValues[3],
+                offset = match.range.first
+            )
+        }
+    }
+
+    /**
+     * Collects method/url/request-type signals from resolved UAST calls.
+     */
+    private fun collectOkHttpCallSignals(call: UCallExpression, signals: MethodSignals) {
+        val resolved = call.resolve() ?: return
+        val ownerFqn = resolved.containingClass?.qualifiedName ?: return
+        if (ownerFqn != OKHTTP_REQUEST_BUILDER_FQN && ownerFqn != OKHTTP_REQUEST_BUILDER_NESTED_FQN) return
+
+        val methodName = call.methodName?.lowercase() ?: return
+        signals.sawOkHttpBuilderCall = true
+
+        when (methodName) {
+            "url" -> {
+                val candidate = call.valueArguments.firstOrNull()?.asSourceString()?.trim()
+                if (!candidate.isNullOrBlank() && signals.urlExpression == null) {
+                    signals.urlExpression = candidate
+                }
+            }
+
+            "get", "post", "put", "patch", "delete", "head" -> {
+                signals.httpMethod = methodName.uppercase()
+                if (signals.httpMethod in bodyMethods) {
+                    val bodyType = call.valueArguments.firstOrNull()?.asSourceString()
+                    if (!bodyType.isNullOrBlank()) {
+                        signals.requestType = normalizeDeclaredType(bodyType) ?: bodyType
+                    }
+                }
+            }
+
+            "method" -> {
+                val methodArg = call.valueArguments.firstOrNull()?.asSourceString()?.trim()
+                val explicitMethod = extractStringLiteral(methodArg.orEmpty())
+                if (!explicitMethod.isNullOrBlank()) {
+                    signals.httpMethod = explicitMethod.uppercase()
+                }
+
+                val bodyType = call.valueArguments.getOrNull(1)?.asSourceString()
+                if (!bodyType.isNullOrBlank() && !bodyType.equals("null", ignoreCase = true)) {
+                    signals.requestType = normalizeDeclaredType(bodyType) ?: bodyType
+                }
+            }
+        }
+    }
+
+    /**
+     * Determines HTTP method from request-builder method bodies/chains.
+     */
+    private fun extractHttpMethod(blockText: String): String? {
         methodOverrideRegex.find(blockText)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }?.let {
             return it.uppercase()
         }
         verbCallRegex.find(blockText)?.groupValues?.getOrNull(1)?.let { return it.uppercase() }
-        return "GET"
+        return null
     }
 
     /**
-     * Infers request body type from request builder usage.
+     * Infers request body type from builder usage.
      */
     private fun inferRequestType(blockText: String): String? {
         if (blockText.contains("MultipartBody.Builder")) return "MultipartBody"
         if (blockText.contains("FormBody.Builder")) return "FormBody"
         if (blockText.contains("RequestBody.create") || blockText.contains("toRequestBody(")) return "RequestBody"
-        return if (verbCallRegex.containsMatchIn(blockText) && extractHttpMethod(blockText) in bodyMethods) {
+        return if (verbCallRegex.containsMatchIn(blockText) && (extractHttpMethod(blockText) in bodyMethods)) {
             "RequestBody"
         } else {
             null
@@ -162,6 +382,54 @@ internal object OkHttpEndpointScanner {
         }
 
         return ResolvedUrl(path = "/", baseUrl = baseUrlFallback)
+    }
+
+    /**
+     * Tries to derive a URL placeholder path from method/constructor parameter names.
+     */
+    private fun inferUrlFromParameters(
+        signatureText: String,
+        fallbackText: String,
+        baseUrlFallback: String?
+    ): ResolvedUrl? {
+        val name = findUrlLikeParameterName(signatureText) ?: findUrlLikeParameterName(fallbackText) ?: return null
+        return ResolvedUrl(path = ensureLeadingSlash("{$name}"), baseUrl = baseUrlFallback)
+    }
+
+    /**
+     * Finds string-like parameter names that imply URL/path content.
+     */
+    private fun findUrlLikeParameterName(paramText: String): String? {
+        constructorParamRegex.findAll(paramText).forEach { match ->
+            val name = match.groupValues[1].trim()
+            val typeText = match.groupValues[2].trim()
+            if (name.isBlank() || typeText.isBlank()) return@forEach
+            if (!typeText.contains("String")) return@forEach
+            val normalized = name.lowercase()
+            if (urlLikeNames.any { normalized.contains(it) }) {
+                return name
+            }
+        }
+        return null
+    }
+
+    /**
+     * Extracts request body type hint from parameter declarations.
+     */
+    private fun extractRequestBodyType(paramText: String): String? {
+        constructorParamRegex.findAll(paramText).forEach { match ->
+            val typeText = match.groupValues[2].trim().removeSuffix("?")
+            if (typeText.contains("RequestBody")) {
+                return typeText.substringAfterLast('.')
+            }
+            if (typeText.contains("MultipartBody")) {
+                return "MultipartBody"
+            }
+            if (typeText.contains("FormBody")) {
+                return "FormBody"
+            }
+        }
+        return null
     }
 
     /**
@@ -255,64 +523,24 @@ internal object OkHttpEndpointScanner {
     }
 
     /**
-     * Extracts endpoint methods from wrapper classes that extend `OkHttpMethodBase`.
-     *
-     * Libraries like Nextcloud model HTTP verbs in subclasses whose `applyType(...)` method
-     * sets the request method (`temp.get()`, `temp.post(body)`, etc.) while URL is passed
-     * through constructor argument (`uri`), not inline `Request.Builder().url(...)` chains.
+     * Adds endpoint if unique by stable identity key.
      */
-    private fun scanOkHttpMethodBaseSubclasses(
-        text: String,
-        packageName: String,
-        constants: Map<String, String>,
-        baseUrlFallback: String?,
-        seenKeys: MutableSet<String>,
-        results: MutableList<Endpoint>
-    ) {
-        okHttpMethodBaseClassRegex.findAll(text).forEach { classMatch ->
-            val className = classMatch.groupValues[1].trim()
-            val constructorParamsRaw = classMatch.groupValues[2]
-            val superArgsRaw = classMatch.groupValues[3]
-            val classBody = classMatch.groupValues[4]
-
-            val applyTypeBody = applyTypeRegex.find(classBody)?.groupValues?.getOrNull(1)?.trim()
-                ?: return@forEach
-
-            val httpMethod = extractHttpMethod(applyTypeBody)
-            val requestType = inferRequestType(applyTypeBody)
-
-            val constructorParamTypes = constructorParamRegex.findAll(constructorParamsRaw)
-                .associate { match ->
-                    match.groupValues[1].trim() to match.groupValues[2].trim()
-                }
-
-            val uriExpression = superArgsRaw.substringBefore(',').trim()
-            val resolvedUrl = resolveUrlExpression(
-                expression = uriExpression,
-                constants = constants,
-                baseUrlFallback = baseUrlFallback
-            )
-
-            val endpoint = Endpoint(
-                httpMethod = httpMethod,
-                path = resolvedUrl.path,
-                serviceFqn = if (packageName.isBlank()) className else "$packageName.$className",
-                functionName = "applyType",
-                requestType = requestType
-                    ?: constructorParamTypes.values.firstOrNull { it.contains("RequestBody") }?.substringAfterLast('.'),
-                responseType = null,
-                baseUrl = resolvedUrl.baseUrl ?: baseUrlFallback
-            )
-
-            val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
-            if (seenKeys.add(key)) {
-                results += endpoint
-            }
+    private fun addUniqueEndpoint(endpoint: Endpoint, seenKeys: MutableSet<String>, results: MutableList<Endpoint>) {
+        val key = "${endpoint.httpMethod}:${endpoint.serviceFqn}:${endpoint.functionName}:${endpoint.path}"
+        if (seenKeys.add(key)) {
+            results += endpoint
         }
     }
 
     /**
-     * Restricts text scanning to source files supported by this heuristic parser.
+     * Restricts scanning to source files and skips obviously irrelevant text.
+     */
+    private fun looksRelevantToOkHttp(text: String): Boolean {
+        return text.contains("okhttp3") || text.contains("Request.Builder") || text.contains("newCall(")
+    }
+
+    /**
+     * Restricts text scanning to source files supported by this parser.
      */
     private fun isSupportedSourceFile(fileName: String): Boolean {
         return fileName.endsWith(".kt") || fileName.endsWith(".java")
@@ -327,6 +555,19 @@ internal object OkHttpEndpointScanner {
     )
 
     private data class FunctionDecl(val offset: Int, val name: String, val returnType: String?)
+
+    private data class ClassHeader(
+        val offset: Int,
+        val className: String,
+        val constructorParams: String
+    )
+
+    private data class MethodSignals(
+        var sawOkHttpBuilderCall: Boolean = false,
+        var httpMethod: String? = null,
+        var urlExpression: String? = null,
+        var requestType: String? = null
+    )
 
     /**
      * Provides nearest class/function declaration context for endpoint call sites.
@@ -382,5 +623,8 @@ internal object OkHttpEndpointScanner {
     }
 
     private val bodyMethods = setOf("POST", "PUT", "PATCH", "DELETE")
+    private val urlLikeNames = setOf("url", "uri", "path", "endpoint", "route")
     private val javaControlKeywords = setOf("if", "for", "while", "switch", "catch", "return")
+    private const val OKHTTP_REQUEST_BUILDER_FQN = "okhttp3.Request.Builder"
+    private const val OKHTTP_REQUEST_BUILDER_NESTED_FQN = "okhttp3.Request\$Builder"
 }
